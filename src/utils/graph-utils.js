@@ -1,8 +1,6 @@
-import { Edge } from 'reactflow';
-
 // Build a dependency map: nodeId -> [dependencies]
-export function buildDependencyMap(edges: Edge[]): Record<string, string[]> {
-  const map: Record<string, string[]> = {};
+export function buildDependencyMap(edges) {
+  const map = {};
   edges.forEach(edge => {
     if (!map[edge.target]) map[edge.target] = [];
     map[edge.target].push(edge.source);
@@ -12,8 +10,8 @@ export function buildDependencyMap(edges: Edge[]): Record<string, string[]> {
 }
 
 // Build a downstream map: nodeId -> [downstream nodes]
-export function buildDownstreamMap(edges: Edge[]): Record<string, string[]> {
-  const map: Record<string, string[]> = {};
+export function buildDownstreamMap(edges) {
+  const map = {};
   edges.forEach(edge => {
     if (!map[edge.source]) map[edge.source] = [];
     map[edge.source].push(edge.target);
@@ -24,12 +22,12 @@ export function buildDownstreamMap(edges: Edge[]): Record<string, string[]> {
 
 // Recursively run dependencies, then the node itself
 export async function runNodeWithDependencies(
-  nodeId: string,
-  runNodeFn: (id: string) => Promise<void>,
-  dependencyMap: Record<string, string[]>,
-  nodeStatusMap: Record<string, string>, // e.g. { nodeId: 'completed' }
-  alreadyRun: Set<string> = new Set(),
-  path: string[] = []
+  nodeId,
+  runNodeFn,
+  dependencyMap,
+  nodeStatusMap, // e.g. { nodeId: 'completed' }
+  alreadyRun = new Set(),
+  path = []
 ) {
   if (alreadyRun.has(nodeId) || nodeStatusMap[nodeId] === 'completed') return;
   if (path.includes(nodeId)) throw new Error(`Cycle detected: ${[...path, nodeId].join(' -> ')}`);
@@ -50,10 +48,10 @@ export async function runNodeWithDependencies(
 
 // Recursively reset all downstream nodes
 export function getAllDownstreamNodes(
-  nodeId: string,
-  downstreamMap: Record<string, string[]>,
-  visited: Set<string> = new Set()
-): Set<string> {
+  nodeId,
+  downstreamMap,
+  visited = new Set()
+) {
   if (visited.has(nodeId)) return visited;
   visited.add(nodeId);
   const downstream = downstreamMap[nodeId] || [];

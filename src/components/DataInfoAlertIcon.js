@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface DataInfoAlertIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const DataInfoAlertIcon: React.FC<DataInfoAlertIconProps> = ({
+const DataInfoAlertIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

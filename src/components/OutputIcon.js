@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface OutputIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const OutputIcon: React.FC<OutputIconProps> = ({
+const OutputIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface UserAttributesIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const UserAttributesIcon: React.FC<UserAttributesIconProps> = ({
+const UserAttributesIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

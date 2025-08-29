@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface DocumentSearchIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const DocumentSearchIcon: React.FC<DocumentSearchIconProps> = ({
+const DocumentSearchIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface StacksIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const StacksIcon: React.FC<StacksIconProps> = ({
+const StacksIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

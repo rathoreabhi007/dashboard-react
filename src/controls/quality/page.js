@@ -19,7 +19,7 @@ export default function QualityControl() {
                 </div>
 
                 {/* Main Control Panel */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-3 gap-6">
                     {/* Metric Selection */}
                     <div className="bg-slate-800/50 backdrop-blur-sm rounded-lg border border-slate-700 p-6">
                         <h2 className="text-lg font-semibold text-emerald-400 mb-4">Quality Metrics</h2>

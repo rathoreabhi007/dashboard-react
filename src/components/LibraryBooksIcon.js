@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface LibraryBooksIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const LibraryBooksIcon: React.FC<LibraryBooksIconProps> = ({
+const LibraryBooksIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

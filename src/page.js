@@ -1,9 +1,9 @@
-import { FaChartLine, FaCheckCircle, FaCog, FaServer, FaBars, FaTimes } from 'react-icons/fa';
-import { useState } from 'react';
+import React from 'react';
+import { FaChartLine, FaCheckCircle, FaCog, FaServer } from 'react-icons/fa';
 import './globals.css';
+import HSBCLogo from './components/HSBCLogo';
 
 function HomePage() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const openNewInstance = (type) => {
     // Generate a unique ID using timestamp and random number
@@ -16,34 +16,14 @@ function HomePage() {
     <div className="relative isolate min-h-screen" style={{ backgroundColor: '#F5F5F5', color: 'black' }}>
       {/* Navigation */}
       <nav className="fixed top-0 left-0 right-0 z-50" style={{ backgroundColor: '#ffffff' }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto px-8">
           <div className="flex items-center justify-between h-16 px-0">
             <div className="flex items-center flex-shrink-0">
-              <img src="/hsbc.png" alt="HSBC Logo" className="h-16 w-auto" />
-              <span className="text-black font-semibold text-lg">HSBC</span>
+              <HSBCLogo height={64} className="mr-2" />
             </div>
 
-            {/* Mobile menu button */}
-            <div className="md:hidden">
-              <button
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="text-gray-300 hover:text-slate-700 focus:outline-none"
-              >
-                {isMenuOpen ? <FaTimes size={24} /> : <FaBars size={24} />}
-              </button>
-            </div>
-
-            {/* Desktop menu */}
-            <div className="hidden md:flex items-center space-x-8">
-              <a href="#features" className="text-black hover:text-slate-700 transition-colors">Features</a>
-              <button className="text-black hover:text-slate-700 transition-colors bg-transparent border-none cursor-pointer">Documentation</button>
-              <button className="text-black hover:text-slate-700 transition-colors bg-transparent border-none cursor-pointer">Support</button>
-            </div>
-          </div>
-
-          {/* Mobile menu */}
-          <div className={`md:hidden ${isMenuOpen ? 'block' : 'hidden'} pb-4`}>
-            <div className="flex flex-col space-y-4">
+            {/* Desktop menu only */}
+            <div className="flex items-center space-x-8">
               <a href="#features" className="text-black hover:text-slate-700 transition-colors">Features</a>
               <button className="text-black hover:text-slate-700 transition-colors bg-transparent border-none cursor-pointer">Documentation</button>
               <button className="text-black hover:text-slate-700 transition-colors bg-transparent border-none cursor-pointer">Support</button>
@@ -53,10 +33,10 @@ function HomePage() {
       </nav>
 
       <div className="flex flex-col min-h-screen">
-        {/* Hero section with reduced padding */}
-        <div className="px-6 pt-24 pb-8 sm:pt-32 sm:pb-12 lg:px-8">
+        {/* Hero section with desktop-optimized padding */}
+        <div className="px-8 pt-32 pb-12">
           <div className="mx-auto max-w-2xl text-center">
-            <h1 className="text-4xl font-bold tracking-tight text-black sm:text-6xl">
+            <h1 className="text-6xl font-bold tracking-tight text-black">
               Generic Control Dashboard
             </h1>
             <p className="mt-6 text-lg leading-8 text-black">
@@ -65,9 +45,9 @@ function HomePage() {
           </div>
         </div>
 
-        {/* Features section with adjusted padding */}
-        <div id="features" className="mx-auto max-w-7xl px-6 lg:px-8 pb-24">
-          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2">
+        {/* Features section with desktop-optimized layout */}
+        <div id="features" className="mx-auto max-w-7xl px-8 pb-24">
+          <div className="grid grid-cols-2 gap-8">
             {/* Feature 1 */}
             <div
               onClick={() => openNewInstance('completeness')}

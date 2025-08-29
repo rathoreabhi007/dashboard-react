@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, ClientSideRowModelModule } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
@@ -7,14 +7,14 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 // Register the client-side row model module (required for AG Grid v31+)
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
-// Constants for AG-Grid configuration
+// Constants for AG-Grid configuration - Desktop Optimized
 const AG_GRID_CONSTANTS = {
-    DEFAULT_HEIGHT: 600,
-    DEFAULT_PAGE_SIZE: 100,
-    DEFAULT_COLUMN_WIDTH: 150,
-    HEADER_HEIGHT: 40,
-    MIN_DROPDOWN_HEIGHT: 300,
-    DEFAULT_DROPDOWN_VALUES_HEIGHT: 200,
+    DEFAULT_HEIGHT: 800,
+    DEFAULT_PAGE_SIZE: 200,
+    DEFAULT_COLUMN_WIDTH: 180,
+    HEADER_HEIGHT: 50,
+    MIN_DROPDOWN_HEIGHT: 400,
+    DEFAULT_DROPDOWN_VALUES_HEIGHT: 300,
     COLORS: {
         SLATE_600: '#334155',
         SLATE_500: '#475569',
@@ -38,7 +38,7 @@ const AG_GRID_CONSTANTS = {
  * @property {string} [exportFileName]
  */
 
-const AgGridTable = ({
+const AgGridTable = React.memo(({
     columns,
     rowData,
     height,
@@ -46,6 +46,12 @@ const AgGridTable = ({
     showExportButtons = true,
     exportFileName = 'data'
 }) => {
+    // Performance monitoring
+    console.log('🔄 AgGridTable render:', {
+        columnsCount: columns?.length,
+        rowDataCount: rowData?.length,
+        timestamp: new Date().toISOString()
+    });
     const gridRef = useRef(null);
     const [tableHeight, setTableHeight] = useState(AG_GRID_CONSTANTS.DEFAULT_HEIGHT);
     const [isLoading, setIsLoading] = useState(false);
@@ -104,13 +110,13 @@ const AgGridTable = ({
 
 
     // Handler to remove a single filter
-    const removeFilter = (column) => {
+    const removeFilter = useCallback((column) => {
         setColumnFilters(prev => {
             const newFilters = { ...prev };
             delete newFilters[column];
             return newFilters;
         });
-    };
+    }, []);
 
     // Calculate pagination with applied filters
     const getFilteredData = () => {
@@ -129,12 +135,12 @@ const AgGridTable = ({
         return filtered;
     };
 
-    const filteredData = getFilteredData();
+    const filteredData = useMemo(() => getFilteredData(), [rowData, columnFilters]);
     const totalRows = filteredData.length;
     const totalPages = Math.ceil(totalRows / pageSize);
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = Math.min(startIndex + pageSize, totalRows);
-    const displayedRows = filteredData.slice(startIndex, endIndex);
+    const displayedRows = useMemo(() => filteredData.slice(startIndex, endIndex), [filteredData, startIndex, endIndex]);
 
     // Calculate height based on screen size
     useEffect(() => {
@@ -284,23 +290,25 @@ const AgGridTable = ({
     }, [showColumnFilter]);
 
     // Column visibility functions
-    const toggleColumnVisibility = (columnField) => {
-        const newVisible = new Set(visibleColumns);
-        if (newVisible.has(columnField)) {
-            newVisible.delete(columnField);
-        } else {
-            newVisible.add(columnField);
-        }
-        setVisibleColumns(newVisible);
-    };
+    const toggleColumnVisibility = useCallback((columnField) => {
+        setVisibleColumns(prev => {
+            const newVisible = new Set(prev);
+            if (newVisible.has(columnField)) {
+                newVisible.delete(columnField);
+            } else {
+                newVisible.add(columnField);
+            }
+            return newVisible;
+        });
+    }, []);
 
-    const selectAllColumns = () => {
+    const selectAllColumns = useCallback(() => {
         setVisibleColumns(new Set(columns.map(col => col.field)));
-    };
+    }, [columns]);
 
-    const clearAllColumns = () => {
+    const clearAllColumns = useCallback(() => {
         setVisibleColumns(new Set());
-    };
+    }, []);
 
     const getFilteredColumns = () => {
         if (!columnSearch) return columns;
@@ -404,9 +412,12 @@ const AgGridTable = ({
     };
 
     // Auto-detect column type and add appropriate filters - ONLY for visible columns
-    const visibleColumnsList = columns.filter(col => visibleColumns.has(col.field));
+    const visibleColumnsList = useMemo(() =>
+        columns.filter(col => visibleColumns.has(col.field)),
+        [columns, visibleColumns]
+    );
 
-    const enhancedColumns = visibleColumnsList
+    const enhancedColumns = useMemo(() => visibleColumnsList
         .map(col => {
             const sampleValues = rowData.slice(0, 10).map(row => row[col.field]).filter(val => val != null);
             const isNumeric = sampleValues.length > 0 && sampleValues.every(val => !isNaN(Number(val)));
@@ -488,38 +499,38 @@ const AgGridTable = ({
                     filterOptions: ['contains', 'equals', 'startsWith', 'endsWith']
                 }
             };
-        });
+        }), [visibleColumnsList, rowData, columnFilters]);
 
     // Pagination handlers
-    const goToPage = (page) => {
+    const goToPage = useCallback((page) => {
         if (page >= 1 && page <= totalPages) {
             setCurrentPage(page);
         }
-    };
+    }, [totalPages]);
 
-    const handlePageSizeChange = (newSize) => {
+    const handlePageSizeChange = useCallback((newSize) => {
         setPageSize(newSize);
         setCustomPageSize(newSize.toString());
         setShowCustomInput(false);
-    };
+    }, []);
 
-    const handleCustomPageSizeSubmit = () => {
+    const handleCustomPageSizeSubmit = useCallback(() => {
         const size = parseInt(customPageSize);
         if (size && size > 0 && size <= totalRows) {
             setPageSize(size);
             setShowCustomInput(false);
         }
-    };
+    }, [customPageSize, totalRows]);
 
     // Export functions - FIXED to work with full dataset and visible columns only
-    const exportToCsv = () => {
+    const exportToCsv = useCallback(() => {
         // Export ALL original data but only visible columns
         const visibleColumnsArray = columns.filter(col => visibleColumns.has(col.field));
         const allDataCsv = convertToCSV(rowData, visibleColumnsArray);
         downloadCSV(allDataCsv, `${exportFileName}_all.csv`);
-    };
+    }, [columns, visibleColumns, rowData, exportFileName]);
 
-    const exportFilteredToCsv = () => {
+    const exportFilteredToCsv = useCallback(() => {
         // Apply current filters to full dataset and export visible columns only
         const visibleColumnsArray = columns.filter(col => visibleColumns.has(col.field));
 
@@ -539,9 +550,9 @@ const AgGridTable = ({
         // Export the fully filtered data with only visible columns
         const filteredCsv = convertToCSV(filteredData, visibleColumnsArray);
         downloadCSV(filteredCsv, `${exportFileName}_filtered.csv`);
-    };
+    }, [columns, visibleColumns, exportFileName]);
 
-    const exportSelectedToCsv = () => {
+    const exportSelectedToCsv = useCallback(() => {
         if (gridRef.current) {
             const selectedNodes = gridRef.current.api.getSelectedNodes();
             const selectedData = selectedNodes.map(node => node.data);
@@ -553,14 +564,14 @@ const AgGridTable = ({
                 alert('No rows selected. Please select rows to export.');
             }
         }
-    };
+    }, [columns, visibleColumns, exportFileName]);
 
-    const clearAllFilters = () => {
+    const clearAllFilters = useCallback(() => {
         if (gridRef.current) {
             gridRef.current.api.setFilterModel(null);
         }
         clearAllColumnFilters();
-    };
+    }, []);
 
     // Helper function to convert data to CSV
     const convertToCSV = (data, columns) => {
@@ -1173,6 +1184,12 @@ const AgGridTable = ({
 
                             // Enhanced column sizing approach - only for initial load and container resize
                             const fitColumnsWithPadding = () => {
+                                // Add null checks to prevent errors
+                                if (!params.api || !params.api.gridBodyCtrl || !params.api.gridBodyCtrl.eBodyViewport) {
+                                    console.warn('Grid not fully initialized yet, skipping column sizing');
+                                    return;
+                                }
+
                                 const containerWidth = params.api.gridBodyCtrl.eBodyViewport.clientWidth;
                                 const allColumns = params.api.getAllDisplayedColumns();
 
@@ -1212,12 +1229,15 @@ const AgGridTable = ({
 
                             // Initial sizing - only if no manual resizes exist
                             if (!params.api.hasManualResizes) {
-                                fitColumnsWithPadding();
+                                // Add a small delay to ensure grid is fully rendered
+                                setTimeout(() => {
+                                    fitColumnsWithPadding();
+                                }, 100);
                             }
 
                             // Set up a more intelligent resize detection using ResizeObserver
                             // This will detect when the grid container itself changes size
-                            const gridContainer = params.api.gridBodyCtrl.eBodyViewport;
+                            const gridContainer = params.api.gridBodyCtrl?.eBodyViewport;
                             if (gridContainer && window.ResizeObserver) {
                                 let resizeTimeout;
 
@@ -1711,6 +1731,6 @@ const AgGridTable = ({
             )}
         </div>
     );
-};
+});
 
 export default AgGridTable; 

@@ -16,7 +16,7 @@ import { FaCheckCircle, FaTimesCircle, FaSpinner, FaCircle, FaPlay, FaStop, FaUn
 import { ApiService } from '../../services/api';
 import { buildDependencyMap, buildDownstreamMap, getAllDownstreamNodes } from '../../utils/graph-utils';
 import { HandlerContext } from './HandlerContext';
-import AgGridTable from '../../utils/AgGridTable';
+import DataOutputTab from '../../components/DataOutput/DataOutputTab';
 import UserAttributesIcon from '../../components/UserAttributesIcon';
 import DocumentSearchIcon from '../../components/DocumentSearchIcon';
 import LibraryBooksIcon from '../../components/LibraryBooksIcon';
@@ -27,16 +27,19 @@ import StacksIcon from '../../components/StacksIcon';
 import DataInfoAlertIcon from '../../components/DataInfoAlertIcon';
 import OutputIcon from '../../components/OutputIcon';
 import ChangeCircleIcon from '../../components/ChangeCircleIcon';
+import HSBCLogo from '../../components/HSBCLogo';
+import FailedNodeIndicator from '../../components/FailedNodeIndicator';
+import '../../styles/dataOutput.css';
 
 // Node status types (removed TypeScript types for JavaScript)
 
 // Constants for consistent styling and configuration
 const CONSTANTS = {
-    // UI Dimensions
-    MIN_SIDEBAR_WIDTH: 48,
-    MAX_SIDEBAR_WIDTH: 800,
-    MIN_BOTTOM_BAR_HEIGHT: 200,
-    DEFAULT_SIDEBAR_WIDTH: 320,
+    // UI Dimensions - Desktop Optimized
+    MIN_SIDEBAR_WIDTH: 64,
+    MAX_SIDEBAR_WIDTH: 600,
+    MIN_BOTTOM_BAR_HEIGHT: 300,
+    DEFAULT_SIDEBAR_WIDTH: 400,
 
     // Colors
     COLORS: {
@@ -648,6 +651,20 @@ const CustomNode = memo(({ data, id, nodeOutputs, setSelectedNode, setSelectedTa
 
 
             <div className="text-[10px] text-black mt-1 max-w-[80px] text-center font-medium">{data.fullName}</div>
+
+            {/* Failed Node Indicator Component */}
+            <FailedNodeIndicator
+                nodeId={id}
+                nodeData={data}
+                nodeOutputs={nodeOutputs}
+                onViewError={(selectedNodeData) => {
+                    setSelectedNode(selectedNodeData);
+                    setSelectedTab('fail');
+                    setIsBottomBarOpen(true);
+                    setActivePanel('bottombar');
+                }}
+            />
+
             <div className="flex gap-1 mt-1">
                 <button
                     onClick={(e) => {
@@ -708,20 +725,32 @@ const CustomNode = memo(({ data, id, nodeOutputs, setSelectedNode, setSelectedTa
 // Utility function to safely manage localStorage quota
 const safeLocalStorageSet = (key, value) => {
     try {
+        // Check if the value is too large (localStorage has ~5-10MB limit)
+        const sizeInBytes = new Blob([value]).size;
+        const maxSize = 4 * 1024 * 1024; // 4MB limit
+
+        if (sizeInBytes > maxSize) {
+            console.warn(`Data too large for localStorage (${(sizeInBytes / 1024 / 1024).toFixed(2)}MB), skipping save`);
+            return false;
+        }
+
         localStorage.setItem(key, value);
         return true;
     } catch (error) {
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
             console.warn('localStorage quota exceeded, attempting to free space...');
-            // Clear old node outputs to free space
+
+            // Clear old data to free space (more aggressive cleanup)
             const keysToRemove = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (key && key.includes('nodeOutputs_')) {
+                if (key && (key.includes('nodeOutputs_') || key.includes('nodes_') || key.includes('processIds_'))) {
                     keysToRemove.push(key);
                 }
             }
-            keysToRemove.forEach(key => {
+
+            // Remove oldest keys first
+            keysToRemove.slice(0, Math.floor(keysToRemove.length / 2)).forEach(key => {
                 try {
                     localStorage.removeItem(key);
                 } catch (e) {
@@ -772,12 +801,12 @@ export default function CompletenessControl({ instanceId }) {
     const [isBottomBarOpen, setIsBottomBarOpen] = useState(storedUIState.isBottomBarOpen || false);
     const [activePanel, setActivePanel] = useState(storedUIState.activePanel || null);
     const [bottomBarHeight, setBottomBarHeight] = useState(() => {
-        // Responsive initial height based on screen size
+        // Desktop-optimized initial height
         if (typeof window !== 'undefined') {
             const vh = window.innerHeight;
-            return Math.min(Math.max(vh * 0.3, 200), vh * 0.6); // 30-60% of viewport height
+            return Math.min(Math.max(vh * 0.4, 300), vh * 0.7); // 40-70% of viewport height for desktop
         }
-        return 300; // fallback
+        return 400; // desktop fallback
     });
     const [isResizingBottom, setIsResizingBottom] = useState(false);
     const [selectedNode, setSelectedNode] = useState(storedUIState.selectedNode || null);
@@ -796,8 +825,8 @@ export default function CompletenessControl({ instanceId }) {
     const resizeRef = useRef(null);
     const minWidth = CONSTANTS.MIN_SIDEBAR_WIDTH;
     const maxWidth = CONSTANTS.MAX_SIDEBAR_WIDTH;
-    const minHeight = CONSTANTS.MIN_BOTTOM_BAR_HEIGHT;  // Increase minimum height for better usability
-    const maxHeight = typeof window !== 'undefined' ? window.innerHeight * 0.8 : 600;  // Max 80% of viewport
+    const minHeight = CONSTANTS.MIN_BOTTOM_BAR_HEIGHT;  // Desktop minimum height
+    const maxHeight = typeof window !== 'undefined' ? window.innerHeight * 0.8 : 800;  // Max 80% of viewport for desktop
     const nodeTimeouts = useRef({});
     const [runParams, setRunParams] = useState(() => {
         const saved = localStorage.getItem(paramKey);
@@ -926,29 +955,8 @@ export default function CompletenessControl({ instanceId }) {
         }
     }, [selectedNodes]);
 
-    // Memoize data transformations for AgGridTable (moved outside conditional rendering)
-    const memoizedColumns = useMemo(() => {
-        if (selectedNode?.data?.output?.calculation_results?.headers) {
-            return selectedNode.data.output.calculation_results.headers.map((header) => ({
-                headerName: header,
-                field: header
-            }));
-        }
-        return [];
-    }, [selectedNode?.data?.output?.calculation_results?.headers]);
+    // Memoize data transformations for AgGridTable with better optimization
 
-    const memoizedRowData = useMemo(() => {
-        if (selectedNode?.data?.output?.calculation_results?.table && selectedNode?.data?.output?.calculation_results?.headers) {
-            return selectedNode.data.output.calculation_results.table.map((row) => {
-                const obj = {};
-                selectedNode.data.output.calculation_results.headers.forEach((header, index) => {
-                    obj[header] = row[index];
-                });
-                return obj;
-            });
-        }
-        return [];
-    }, [selectedNode?.data?.output?.calculation_results?.table, selectedNode?.data?.output?.calculation_results?.headers]);
 
     const updateNodeStatus = useCallback((nodeId, status) => {
         console.log(`Node ${nodeId} status updated to: ${status}`);
@@ -963,8 +971,12 @@ export default function CompletenessControl({ instanceId }) {
         // Update edge colors and labels based on source node status
         setEdges(eds => eds.map(edge => {
             if (edge.source === nodeId) {
-                const sourceOutput = nodeOutputs && nodeOutputs[nodeId];
-                const rowCount = sourceOutput?.calculation_results?.table?.length;
+                const sourceOutput = nodeOutputs?.[nodeId];
+                // sourceOutput is used for data processing but not directly referenced
+                // Use the count field from backend response (total rows generated)
+                // instead of table length (frontend-limited rows)
+                const rowCount = sourceOutput?.count ? parseInt(sourceOutput.count) :
+                    sourceOutput?.calculation_results?.table?.length;
 
                 return {
                     ...edge,
@@ -1141,6 +1153,7 @@ export default function CompletenessControl({ instanceId }) {
                             <option value="development" className="text-black">Development</option>
                             <option value="staging" className="text-black">Staging</option>
                             <option value="production" className="text-black">Production</option>
+                            <option value="TEST_FAILURE" className="text-black text-red-600 font-semibold">🧪 TEST_FAILURE (Simulate Error)</option>
                         </select>
                     ) : (
                         <input
@@ -1313,12 +1326,12 @@ export default function CompletenessControl({ instanceId }) {
         };
     }, [isResizing, isResizingBottom, minHeight, maxHeight]);
 
-    // Handle window resize to adjust bottom bar responsively
+    // Handle window resize for desktop optimization
     useEffect(() => {
         const handleWindowResize = () => {
             const vh = window.innerHeight;
             const newMaxHeight = vh * 0.8;
-            const newMinHeight = 200;
+            const newMinHeight = 300; // Desktop minimum
 
             // Adjust bottom bar height if it's outside the new bounds
             setBottomBarHeight(prev => {
@@ -1519,40 +1532,56 @@ export default function CompletenessControl({ instanceId }) {
                 timestamp: new Date().toISOString()
             };
             const response = await ApiService.startCalculation(request);
-            let nodeOutput = null;
             if (response.process_id) {
                 setProcessIds(prev => ({ ...prev, [nodeId]: response.process_id }));
-                // Poll for completion
-                let finished = false;
-                while (!finished) {
+
+                // Poll for completion with proper timeout and retry limits
+                const maxRetries = 30; // Maximum 30 attempts (2.5 minutes)
+                const pollInterval = 5000; // 5 seconds
+                let pollCount = 0;
+
+                while (pollCount < maxRetries) {
                     try {
+                        pollCount++;
+                        console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}/${maxRetries}`);
+
                         const status = await ApiService.getProcessStatus(response.process_id);
+
                         if (status.status === 'completed' || status.status === 'failed') {
+                            console.log(`✅ Node ${nodeId} finished with status: ${status.status}`);
                             updateNodeStatus(nodeId, status.status);
+
                             if (status.status === 'completed' && status.output) {
                                 setNodeOutputs(prev => {
                                     const updated = { ...prev, [nodeId]: status.output };
-                                    // localStorage is now handled by useEffect with lightweight data
                                     return updated;
                                 });
-                                nodeOutput = status.output;
+                                return status.output;
                             }
-                            finished = true;
+                            break; // Exit the loop
                         } else {
-                            await new Promise(res => setTimeout(res, 1000));
+                            console.log(`⏳ Node ${nodeId} still running... (${status.status})`);
+                            await new Promise(res => setTimeout(res, pollInterval));
                         }
                     } catch (error) {
+                        console.error(`❌ Error polling node ${nodeId}:`, error);
                         // Only set to failed if the node is not idle
                         setNodes(nds => nds.map(node =>
                             node.id === nodeId && node.data.status !== 'idle'
                                 ? { ...node, data: { ...node.data, status: 'failed' } }
                                 : node
                         ));
-                        finished = true;
+                        break; // Exit the loop on error
                     }
                 }
+
+                // If we reached max retries, mark as failed
+                if (pollCount >= maxRetries) {
+                    console.warn(`⚠️ Node ${nodeId} exceeded maximum polling attempts (${maxRetries})`);
+                    updateNodeStatus(nodeId, 'failed');
+                }
             }
-            return nodeOutput;
+            return null;
         } catch (error) {
             // Only set to failed if the node is not idle
             setNodes(nds => nds.map(node =>
@@ -1637,7 +1666,10 @@ export default function CompletenessControl({ instanceId }) {
     useEffect(() => {
         setEdges(eds => eds.map(edge => {
             const sourceOutput = nodeOutputs && nodeOutputs[edge.source];
-            const rowCount = sourceOutput?.calculation_results?.table?.length;
+            // Use the count field from backend response (total rows generated)
+            // instead of table length (frontend-limited rows)
+            const rowCount = sourceOutput?.count ? parseInt(sourceOutput.count) :
+                sourceOutput?.calculation_results?.table?.length;
             const sourceNode = nodes.find(n => n.id === edge.source);
             const sourceStatus = sourceNode?.data?.status;
 
@@ -1798,7 +1830,7 @@ export default function CompletenessControl({ instanceId }) {
                     <div
                         className="flex flex-col h-screen transition-all duration-300 ease-in-out"
                         style={{
-                            marginRight: isSidebarOpen ? `${sidebarWidth}px` : '48px'
+                            marginRight: isSidebarOpen ? `${sidebarWidth}px` : '64px'
                         }}
                     >
                         {/* Flow Container */}
@@ -1811,12 +1843,10 @@ export default function CompletenessControl({ instanceId }) {
                             }}
                         >
                             <div
-                                className="border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-2 sm:py-3 lg:py-4"
+                                className="border-b border-slate-200 px-8 py-4"
                                 style={{
                                     backgroundColor: 'white',
-                                    minHeight: '4vh', // Responsive header height (4% of viewport height)
-                                    maxHeight: '8vh', // Maximum height to prevent it from getting too large
-                                    height: 'auto',
+                                    height: '80px', // Fixed desktop header height
                                     boxShadow: `
                                     0 4px 8px rgba(0,0,0,0.15),
                                     0 8px 16px rgba(0,0,0,0.1),
@@ -1829,24 +1859,21 @@ export default function CompletenessControl({ instanceId }) {
                                 <div className="flex items-center justify-between h-full">
                                     {/* HSBC Logo and Name - Left */}
                                     <div className="flex items-center flex-shrink-0">
-                                        <img
-                                            src="/hsbc.png"
-                                            alt="HSBC Logo"
-                                            className="h-8 sm:h-12 lg:h-16 w-auto mr-2 sm:mr-3 lg:mr-4"
-                                            style={{ maxHeight: '6vh' }}
+                                        <HSBCLogo
+                                            height={64}
+                                            className="mr-4"
                                         />
-                                        <span className="text-black font-bold text-lg sm:text-xl lg:text-2xl">HSBC</span>
                                     </div>
 
                                     {/* Professional Title - Center */}
                                     <div className="flex-1 flex justify-center">
-                                        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-black text-center">
+                                        <h1 className="text-2xl font-bold text-black text-center">
                                             GENERIC COMPLETENESS CONTROL
                                         </h1>
                                     </div>
 
                                     {/* Right spacer for balance */}
-                                    <div className="flex-shrink-0 w-16 sm:w-20 lg:w-24"></div>
+                                    <div className="flex-shrink-0 w-24"></div>
                                 </div>
                             </div>
                             <div
@@ -1986,12 +2013,12 @@ export default function CompletenessControl({ instanceId }) {
                                             <div className="mt-2">
                                                 {selectedTab === 'histogram' && (
                                                     <div>
-                                                        {/* Show all column names (headers) in a vertical scrollable list with search */}
-                                                        {selectedNode.data.output?.calculation_results?.headers ? (
+                                                        {/* Show histogram data with statistics */}
+                                                        {selectedNode.data.output?.histogram_data ? (
                                                             <div className="flex flex-col h-full">
                                                                 <div className="mb-2">
                                                                     <div className="flex items-center gap-2 mb-2">
-                                                                        <span className="font-semibold text-black text-sm">Data Columns ({selectedNode.data.output.calculation_results.headers.length} total)</span>
+                                                                        <span className="font-semibold text-black text-sm">Histogram Analysis ({selectedNode.data.output.histogram_data.length} columns)</span>
                                                                     </div>
                                                                     <div className="flex items-center gap-2 flex-wrap">
                                                                         <select
@@ -2006,7 +2033,7 @@ export default function CompletenessControl({ instanceId }) {
                                                                         </select>
                                                                         <input
                                                                             type="text"
-                                                                            placeholder="Filter value..."
+                                                                            placeholder="Filter column names..."
                                                                             value={histogramFilterValue}
                                                                             onChange={e => setHistogramFilterValue(e.target.value)}
                                                                             className="px-3 py-1 rounded bg-white text-black text-sm border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1"
@@ -2024,47 +2051,129 @@ export default function CompletenessControl({ instanceId }) {
                                                                     </div>
                                                                 </div>
                                                                 <div
-                                                                    className="ag-theme-alpine border border-gray-300 rounded bg-white"
+                                                                    className="border border-gray-300 rounded bg-white overflow-auto"
                                                                     style={{
-                                                                        height: `${bottomBarHeight - 140}px`, // Dynamic height - space for header, tabs and padding
-                                                                        overflow: 'auto'
+                                                                        height: `${bottomBarHeight - 140}px`
                                                                     }}
                                                                 >
-                                                                    <div className="p-0">
+                                                                    <div className="p-4">
                                                                         {(() => {
-                                                                            const filteredHeaders = selectedNode.data.output.calculation_results.headers.filter((header) => {
+                                                                            const histogramData = selectedNode.data.output.histogram_data;
+                                                                            const filteredHistogram = histogramData.filter((item) => {
                                                                                 if (!histogramFilterValue) return true;
 
-                                                                                const headerLower = header.toLowerCase();
-                                                                                const filterValueLower = histogramFilterValue.toLowerCase();
+                                                                                const columnName = item.column_name.toLowerCase();
+                                                                                const filterValue = histogramFilterValue.toLowerCase();
 
                                                                                 switch (histogramFilterType) {
                                                                                     case 'equals':
-                                                                                        return headerLower === filterValueLower;
+                                                                                        return columnName === filterValue;
                                                                                     case 'startsWith':
-                                                                                        return headerLower.startsWith(filterValueLower);
+                                                                                        return columnName.startsWith(filterValue);
                                                                                     case 'endsWith':
-                                                                                        return headerLower.endsWith(filterValueLower);
+                                                                                        return columnName.endsWith(filterValue);
                                                                                     case 'contains':
                                                                                     default:
-                                                                                        return headerLower.includes(filterValueLower);
+                                                                                        return columnName.includes(filterValue);
                                                                                 }
                                                                             });
 
-                                                                            return filteredHeaders.length > 0 ? (
-                                                                                <ul className="space-y-1">
-                                                                                    {filteredHeaders.map((header, idx) => (
-                                                                                        <li key={idx} className="inline-block bg-white border border-gray-200 text-black rounded px-3 py-2 text-sm hover:bg-gray-50 transition-colors shadow-sm" title={header}>
-                                                                                            <span className="text-gray-600 mr-2 font-medium">#{idx + 1}</span>
-                                                                                            <span className="font-normal">{header}</span>
-                                                                                        </li>
+                                                                            return filteredHistogram.length > 0 ? (
+                                                                                <div className="space-y-4">
+                                                                                    {filteredHistogram.map((item, idx) => (
+                                                                                        <div key={idx} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                                                                                            <div className="flex items-center justify-between mb-3">
+                                                                                                <h3 className="text-lg font-semibold text-gray-800">
+                                                                                                    {item.column_name}
+                                                                                                </h3>
+                                                                                                <span className={`px-2 py-1 rounded text-xs font-medium ${item.data_type === 'text' ? 'bg-blue-100 text-blue-800' :
+                                                                                                    item.data_type === 'numeric' ? 'bg-green-100 text-green-800' :
+                                                                                                        'bg-gray-100 text-gray-800'
+                                                                                                    }`}>
+                                                                                                    {item.data_type}
+                                                                                                </span>
+                                                                                            </div>
+
+                                                                                            <div className="grid grid-cols-2 gap-4 mb-3">
+                                                                                                <div>
+                                                                                                    <span className="text-sm font-medium text-gray-600">Total Values:</span>
+                                                                                                    <span className="ml-2 text-sm text-gray-800">{item.total_values.toLocaleString()}</span>
+                                                                                                </div>
+                                                                                                <div>
+                                                                                                    <span className="text-sm font-medium text-gray-600">Unique Values:</span>
+                                                                                                    <span className="ml-2 text-sm text-gray-800">{item.unique_values.toLocaleString()}</span>
+                                                                                                </div>
+                                                                                            </div>
+
+                                                                                            {item.data_type === 'text' && item.top_values && (
+                                                                                                <div className="mb-3">
+                                                                                                    <h4 className="text-sm font-medium text-gray-700 mb-2">Top Values:</h4>
+                                                                                                    <div className="space-y-1">
+                                                                                                        {item.top_values.slice(0, 5).map((val, valIdx) => (
+                                                                                                            <div key={valIdx} className="flex justify-between text-sm">
+                                                                                                                <span className="text-gray-600 truncate" title={val.value}>
+                                                                                                                    {val.value.length > 30 ? val.value.substring(0, 30) + '...' : val.value}
+                                                                                                                </span>
+                                                                                                                <span className="text-gray-800 font-medium">{val.count}</span>
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+
+                                                                                            {item.data_type === 'numeric' && item.summary && (
+                                                                                                <div className="mb-3">
+                                                                                                    <h4 className="text-sm font-medium text-gray-700 mb-2">Statistics:</h4>
+                                                                                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                                                                                        <div><span className="text-gray-600">Min:</span> <span className="text-gray-800">{item.summary.min?.toFixed(2)}</span></div>
+                                                                                                        <div><span className="text-gray-600">Max:</span> <span className="text-gray-800">{item.summary.max?.toFixed(2)}</span></div>
+                                                                                                        <div><span className="text-gray-600">Mean:</span> <span className="text-gray-800">{item.summary.mean?.toFixed(2)}</span></div>
+                                                                                                        <div><span className="text-gray-600">Median:</span> <span className="text-gray-800">{item.summary.median?.toFixed(2)}</span></div>
+                                                                                                        <div><span className="text-gray-600">Std Dev:</span> <span className="text-gray-800">{item.summary.std_dev?.toFixed(2)}</span></div>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+
+                                                                                            {item.data_type === 'text' && item.summary && (
+                                                                                                <div className="mb-3">
+                                                                                                    <h4 className="text-sm font-medium text-gray-700 mb-2">Text Statistics:</h4>
+                                                                                                    <div className="grid grid-cols-3 gap-2 text-sm">
+                                                                                                        <div><span className="text-gray-600">Min Length:</span> <span className="text-gray-800">{item.summary.min_length}</span></div>
+                                                                                                        <div><span className="text-gray-600">Max Length:</span> <span className="text-gray-800">{item.summary.max_length}</span></div>
+                                                                                                        <div><span className="text-gray-600">Avg Length:</span> <span className="text-gray-800">{item.summary.avg_length?.toFixed(1)}</span></div>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+
+                                                                                            {item.data_type === 'numeric' && item.distribution && (
+                                                                                                <div>
+                                                                                                    <h4 className="text-sm font-medium text-gray-700 mb-2">Distribution (10 bins):</h4>
+                                                                                                    <div className="space-y-1">
+                                                                                                        {item.distribution.bin_counts.map((count, binIdx) => (
+                                                                                                            <div key={binIdx} className="flex items-center text-sm">
+                                                                                                                <span className="text-gray-600 w-16">Bin {binIdx + 1}:</span>
+                                                                                                                <div className="flex-1 bg-gray-200 rounded-full h-2 mx-2">
+                                                                                                                    <div
+                                                                                                                        className="bg-blue-500 h-2 rounded-full"
+                                                                                                                        style={{
+                                                                                                                            width: `${Math.max(2, (count / Math.max(...item.distribution.bin_counts)) * 100)}%`
+                                                                                                                        }}
+                                                                                                                    ></div>
+                                                                                                                </div>
+                                                                                                                <span className="text-gray-800 w-12 text-right">{count}</span>
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
                                                                                     ))}
-                                                                                    <div className="mt-3 text-black text-sm border-t border-gray-200 pt-2">
-                                                                                        Showing {filteredHeaders.length} of {selectedNode.data.output.calculation_results.headers.length} columns
+                                                                                    <div className="mt-4 text-sm text-gray-600 border-t border-gray-200 pt-2">
+                                                                                        Showing {filteredHistogram.length} of {histogramData.length} columns
                                                                                     </div>
-                                                                                </ul>
+                                                                                </div>
                                                                             ) : (
-                                                                                <div className="text-black text-sm">No columns found matching the filter criteria.</div>
+                                                                                <div className="text-gray-600 text-center py-8">No columns found matching the filter criteria.</div>
                                                                             );
                                                                         })()}
                                                                     </div>
@@ -2077,20 +2186,17 @@ export default function CompletenessControl({ instanceId }) {
                                                 )}
                                                 {selectedTab === 'data' && (
                                                     <div>
-                                                        {/* Column Selection and Data Output */}
+                                                        {/* New Optimized Data Output Tab */}
                                                         {selectedNode.data.output?.calculation_results?.headers && selectedNode.data.output?.calculation_results?.table ? (
                                                             <div className="flex flex-col h-full">
-                                                                {/* Column Filter Section - Compact */}
-
-
-                                                                {/* AG Grid with filtered columns */}
-                                                                <div className="flex-1">
-                                                                    <AgGridTable
-                                                                        columns={memoizedColumns}
-                                                                        rowData={memoizedRowData}
-                                                                        height={bottomBarHeight - 120}
-                                                                    />
-                                                                </div>
+                                                                <DataOutputTab
+                                                                    selectedNode={selectedNode}
+                                                                    bottomBarHeight={bottomBarHeight}
+                                                                    onError={(error) => {
+                                                                        console.error('Data Output Error:', error);
+                                                                        // Handle error - could show notification or fallback
+                                                                    }}
+                                                                />
                                                             </div>
                                                         ) : selectedNode.data.output?.calculation_results ? (
                                                             <div>
@@ -2129,16 +2235,50 @@ export default function CompletenessControl({ instanceId }) {
                                                 )}
                                                 {selectedTab === 'fail' && (
                                                     <div>
-                                                        {/* Fail Message only if node failed */}
-                                                        {selectedNode.data.status === 'failed' && selectedNode.data.output?.fail_message ? (
-                                                            <div
-                                                                className="bg-red-900/50 rounded p-2 text-red-300 overflow-y-auto"
-                                                                style={{ height: `${bottomBarHeight - 100}px` }}
-                                                            >
-                                                                {selectedNode.data.output.fail_message}
+                                                        {/* Fail Message display */}
+                                                        {selectedNode.data.output?.fail_message ? (
+                                                            <div className="space-y-4">
+                                                                {/* Error Details */}
+                                                                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                                                    <div className="flex items-center gap-3 mb-3">
+                                                                        <div className="w-6 h-6 bg-red-100 rounded-full flex items-center justify-center">
+                                                                            <svg className="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                                                            </svg>
+                                                                        </div>
+                                                                        <div>
+                                                                            <h3 className="text-lg font-semibold text-red-800">Node Execution Failed</h3>
+                                                                            <p className="text-sm text-red-600">The node encountered an error during execution</p>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Error Message */}
+                                                                <div className="bg-white border border-red-200 rounded-md p-4">
+                                                                    <h4 className="text-sm font-medium text-red-800 mb-2">Error Details:</h4>
+                                                                    <pre className="text-sm text-red-700 bg-red-50 p-3 rounded border overflow-auto max-h-96">
+                                                                        {selectedNode.data.output.fail_message}
+                                                                    </pre>
+                                                                </div>
+
+                                                                {/* Execution Logs */}
+                                                                {selectedNode.data.output?.execution_logs && (
+                                                                    <div className="bg-white border border-red-200 rounded-md p-4">
+                                                                        <h4 className="text-sm font-medium text-red-800 mb-2">Execution Logs:</h4>
+                                                                        <div className="text-sm text-red-700 bg-red-50 p-3 rounded border max-h-48 overflow-auto">
+                                                                            {selectedNode.data.output.execution_logs.map((log, index) => (
+                                                                                <div key={index} className="mb-1">
+                                                                                    <span className="text-red-600">[{index + 1}]</span> {log}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         ) : (
-                                                            <div className="text-slate-400">No fail message (node did not fail)</div>
+                                                            <div className="text-slate-400 text-center py-8">
+                                                                No fail message available. This node did not encounter any errors.
+                                                            </div>
                                                         )}
                                                     </div>
                                                 )}
@@ -2167,7 +2307,7 @@ export default function CompletenessControl({ instanceId }) {
                     ${!isSidebarOpen ? 'w-12' : ''}
                 `}
                         style={{
-                            width: isSidebarOpen ? `${sidebarWidth}px` : '48px',
+                            width: isSidebarOpen ? `${sidebarWidth}px` : '64px',
                             transition: isResizing ? 'none' : undefined,
                             zIndex: activePanel === 'sidebar' ? 50 : 20
                         }}
@@ -2287,7 +2427,7 @@ export default function CompletenessControl({ instanceId }) {
                             <div
                                 className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs text-black vertical-text"
                             >
-                                <style jsx>{`
+                                <style>{`
                             .vertical-text {
                                 writing-mode: vertical-rl;
                                 text-orientation: mixed;

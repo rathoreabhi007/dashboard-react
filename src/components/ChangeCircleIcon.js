@@ -1,12 +1,6 @@
 import React from 'react';
 
-interface ChangeCircleIconProps {
-    size?: number;
-    color?: string;
-    className?: string;
-}
-
-const ChangeCircleIcon: React.FC<ChangeCircleIconProps> = ({
+const ChangeCircleIcon = ({
     size = 20,
     color = 'currentColor',
     className = ''

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import GenReconAnalysis from '../../controls/config/page';
+import WorkflowTool from '../../controls/workflow/page';
 
-export default function ConfigInstance() {
+export default function WorkflowInstance() {
     const { id } = useParams();
     const [instanceId, setInstanceId] = useState('');
     const [timestamp, setTimestamp] = useState('');
@@ -11,21 +11,21 @@ export default function ConfigInstance() {
         if (id) {
             setInstanceId(id);
             setTimestamp(new Date().toISOString());
-            document.title = `GenRecon Analysis`;
+            document.title = `Data Workflow Tool`;
         }
     }, [id]);
 
     if (!instanceId || !timestamp) {
         return (
             <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'white', color: 'black' }}>
-                <div className="text-black text-lg">Initializing GenRecon Analysis instance...</div>
+                <div className="text-black text-lg">Initializing Data Workflow Tool instance...</div>
             </div>
         );
     }
 
     return (
         <div>
-            <GenReconAnalysis instanceId={instanceId} />
+            <WorkflowTool instanceId={instanceId} />
         </div>
     );
-} 
+}

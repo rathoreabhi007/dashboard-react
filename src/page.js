@@ -105,10 +105,26 @@ function HomePage() {
                 <div className="p-3 rounded-lg bg-white text-red-500 transition-colors">
                   <FaCog size={32} />
                 </div>
-                <h3 className="text-lg font-semibold text-black">GENERIC AUTO CONFIG CHECKER</h3>
+                <h3 className="text-lg font-semibold text-black">GenRecon Analysis</h3>
               </div>
               <p className="mt-2 text-black">
-                Automatically verify and validate system configurations, ensuring alignment with established standards and requirements.
+                Comprehensive reconciliation analysis and validation with real-time monitoring and automated reporting capabilities.
+              </p>
+            </div>
+
+            {/* Feature 5 */}
+            <div
+              onClick={() => openNewInstance('workflow')}
+              className="group rounded-lg border border-slate-200 p-6 transition-all duration-300 ease-in-out bg-white hover:scale-105 hover:shadow-xl hover:shadow-slate-700/10 cursor-pointer transform-gpu"
+            >
+              <div className="flex items-center gap-4 mb-4">
+                <div className="p-3 rounded-lg bg-white text-red-500 transition-colors">
+                  <FaChartLine size={32} />
+                </div>
+                <h3 className="text-lg font-semibold text-black">Data Workflow Tool</h3>
+              </div>
+              <p className="mt-2 text-black">
+                Visual workflow builder for data operations with drag-and-drop nodes for ETL processes and data transformations.
               </p>
             </div>
           </div>

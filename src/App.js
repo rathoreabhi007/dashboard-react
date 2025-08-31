@@ -6,6 +6,7 @@ import CompletenessInstance from './instances/completeness/CompletenessInstance'
 import QualityInstance from './instances/quality/QualityInstance';
 import BatchInstance from './instances/batch/BatchInstance';
 import ConfigInstance from './instances/config/ConfigInstance';
+import WorkflowInstance from './instances/workflow/WorkflowInstance';
 
 function App() {
     return (
@@ -17,6 +18,7 @@ function App() {
                     <Route path="/instances/quality/:id" element={<QualityInstance />} />
                     <Route path="/instances/batch/:id" element={<BatchInstance />} />
                     <Route path="/instances/config/:id" element={<ConfigInstance />} />
+                    <Route path="/instances/workflow/:id" element={<WorkflowInstance />} />
                 </Routes>
             </div>
         </Router>

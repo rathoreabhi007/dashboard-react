@@ -1277,18 +1277,34 @@ export default function CompletenessControl({ instanceId }) {
                         let checkInterval;
 
                         const checkStatus = () => {
+                            // Check if node has been cancelled
+                            if (cancelledNodesRef.current.has(nodeId)) {
+                                console.log(`🛑 Node ${nodeId} was cancelled during sequential execution, stopping polling`);
+                                clearInterval(checkInterval);
+                                resolve(); // Resolve instead of reject to continue with next nodes
+                                return;
+                            }
+
                             const currentNode = nodes.find(n => n.id === nodeId);
                             if (currentNode?.data.status === 'completed') {
+                                console.log(`✅ Node ${nodeId} completed in sequential execution`);
                                 clearInterval(checkInterval);
                                 resolve();
                             } else if (currentNode?.data.status === 'failed') {
+                                console.log(`❌ Node ${nodeId} failed in sequential execution`);
                                 clearInterval(checkInterval);
                                 reject(new Error(`Node ${nodeId} failed`));
+                            } else if (currentNode?.data.status === 'stopped') {
+                                console.log(`🛑 Node ${nodeId} was stopped/terminated in sequential execution`);
+                                clearInterval(checkInterval);
+                                resolve(); // Resolve instead of reject to continue with next nodes
+                            } else {
+                                console.log(`⏳ Node ${nodeId} still running in sequential execution (${currentNode?.data.status})`);
                             }
                         };
 
                         node.data.onRun(nodeId);
-                        checkInterval = setInterval(checkStatus, 1000);
+                        checkInterval = setInterval(checkStatus, 5000); // Changed to 5 seconds
                     });
                 }
             }
@@ -1488,109 +1504,184 @@ export default function CompletenessControl({ instanceId }) {
         return output;
     }, [updateNodeStatus]);
 
-    // Helper: run a single node and wait for completion, now accepts previousOutputs
-    const runNodeAndWait = useCallback(async (nodeId, previousOutputs) => {
-        // Cancel if node is in cancelledNodes
-        if (cancelledNodesRef.current.has(nodeId)) {
-            console.log(`Node ${nodeId} run cancelled.`);
-            return;
-        }
-        if (!areParamsApplied) {
-            console.log('❌ Cannot run node: Parameters have not been applied');
-            return;
-        }
-        const storedParams = localStorage.getItem(paramKey);
-        if (!storedParams) {
-            console.log('❌ Cannot run node: No validated parameters found');
-            setAreParamsApplied(false);
-            return;
-        }
+    // Enhanced node runner with detailed logging
+    const runNodeAndWait = useCallback(async (nodeId) => {
+        console.log(`🚀 Starting runNodeAndWait for node: ${nodeId}`);
+        
         try {
-            const params = JSON.parse(storedParams);
-            const hasEmptyFields = Object.values(params).some(value =>
-                !value || (typeof value === 'string' && value.trim() === '')
-            );
-            if (hasEmptyFields) {
-                console.log('❌ Cannot run node: Invalid parameters detected');
-                setAreParamsApplied(false);
-                localStorage.removeItem(paramKey);
-                return;
-            }
-            // Proceed with node execution
-            console.log(`🎯 Starting node ${nodeId}`);
+            // Check if node is already running
             const currentNode = nodes.find(n => n.id === nodeId);
             if (currentNode?.data.status === 'running') {
-                console.log('⚠️ Node is already running');
-                return;
+                console.log(`⚠️ Node ${nodeId} is already running, skipping...`);
+                return null;
             }
-            // Update status to running (this will override queued status)
-            updateNodeStatus(nodeId, 'running');
-            const request = {
-                nodeId,
-                parameters: params,
-                previousOutputs,
-                timestamp: new Date().toISOString()
+
+            console.log(`📋 Preparing to run node: ${nodeId}`);
+            
+            // Get node outputs for previous steps
+            const previousOutputs = {};
+            const dependencies = dependencyMap[nodeId] || [];
+            
+            console.log(`🔗 Dependencies for ${nodeId}:`, dependencies);
+            
+            dependencies.forEach(depId => {
+                if (nodeOutputs[depId]) {
+                    previousOutputs[depId] = nodeOutputs[depId];
+                    console.log(`📤 Added previous output from ${depId} to ${nodeId}`);
+                } else {
+                    console.log(`⚠️ No previous output found for dependency ${depId}`);
+                }
+            });
+
+            // Prepare input parameters
+            const input = {
+                nodeId: nodeId,
+                parameters: validatedParams,
+                previousOutputs: Object.keys(previousOutputs).length > 0 ? previousOutputs : null,
+                customParams: {
+                    step_type: nodeId,
+                    timestamp: new Date().toISOString()
+                }
             };
-            const response = await ApiService.startCalculation(request);
-            if (response.process_id) {
-                setProcessIds(prev => ({ ...prev, [nodeId]: response.process_id }));
 
-                // Poll for completion with proper timeout and retry limits
-                const maxRetries = 30; // Maximum 30 attempts (2.5 minutes)
-                const pollInterval = 5000; // 5 seconds
-                let pollCount = 0;
+            console.log(`📤 Sending request for node ${nodeId}:`, {
+                nodeId: input.nodeId,
+                hasPreviousOutputs: !!input.previousOutputs,
+                previousOutputKeys: input.previousOutputs ? Object.keys(input.previousOutputs) : [],
+                customParams: input.customParams
+            });
 
-                while (pollCount < maxRetries) {
-                    try {
-                        pollCount++;
-                        console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}/${maxRetries}`);
+            // Start the calculation
+            const response = await ApiService.startCalculation(input);
+            console.log(`✅ Started calculation for ${nodeId}:`, response);
 
-                        const status = await ApiService.getProcessStatus(response.process_id);
+            // Store process ID
+            setProcessIds(prev => ({ ...prev, [nodeId]: response.process_id }));
+            console.log(`💾 Stored process ID for ${nodeId}: ${response.process_id}`);
 
-                        if (status.status === 'completed' || status.status === 'failed') {
-                            console.log(`✅ Node ${nodeId} finished with status: ${status.status}`);
-                            updateNodeStatus(nodeId, status.status);
+            // Update node status to running
+            updateNodeStatus(nodeId, 'running');
+            console.log(`🔄 Updated ${nodeId} status to 'running'`);
 
-                            if (status.status === 'completed' && status.output) {
-                                setNodeOutputs(prev => {
-                                    const updated = { ...prev, [nodeId]: status.output };
-                                    return updated;
-                                });
-                                return status.output;
-                            }
-                            break; // Exit the loop
-                        } else {
-                            console.log(`⏳ Node ${nodeId} still running... (${status.status})`);
-                            await new Promise(res => setTimeout(res, pollInterval));
+            // Poll for completion with enhanced logging
+            const pollInterval = 5000; // 5 seconds
+            let pollCount = 0;
+
+            console.log(`⏰ Starting polling for ${nodeId} - Interval: ${pollInterval}ms (No max attempts)`);
+
+
+            while (true) {
+                pollCount++;
+                console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}`);
+                
+                // Check if node has been cancelled
+                if (cancelledNodesRef.current.has(nodeId)) {
+                    console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
+                    updateNodeStatus(nodeId, 'stopped');
+                    return null;
+                }
+                
+                // Check if node status is already stopped (from onStop function)
+                const currentNode = nodes.find(n => n.id === nodeId);
+                if (currentNode?.data.status === 'stopped') {
+                    console.log(`🛑 Node ${nodeId} is already stopped, stopping polling`);
+                    return null;
+                }
+                
+                try {
+                    const status = await ApiService.getProcessStatus(response.process_id);
+                    console.log(`📊 Status response for ${nodeId}:`, {
+                        process_id: status.process_id,
+                        status: status.status,
+                        hasOutput: !!status.output,
+                        hasError: !!status.error,
+                        pollCount: pollCount
+                    });
+
+                    if (status.status === 'completed') {
+                        console.log(`✅ Node ${nodeId} completed successfully!`);
+                        
+                        // Get the output
+                        try {
+                            const output = await ApiService.getProcessOutput(response.process_id);
+                            console.log(`📥 Retrieved output for ${nodeId}:`, {
+                                hasOutput: !!output,
+                                outputType: typeof output,
+                                outputKeys: output ? Object.keys(output) : null
+                            });
+                            
+                            setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                            console.log(`💾 Stored output for ${nodeId}`);
+                            
+                            updateNodeStatus(nodeId, 'completed');
+                            console.log(`✅ Updated ${nodeId} status to 'completed'`);
+                            
+                            return output;
+                        } catch (outputError) {
+                            console.error(`❌ Error getting output for ${nodeId}:`, outputError);
+                            updateNodeStatus(nodeId, 'failed');
+                            console.log(`❌ Updated ${nodeId} status to 'failed' due to output error`);
+                            break;
                         }
-                    } catch (error) {
-                        console.error(`❌ Error polling node ${nodeId}:`, error);
-                        // Only set to failed if the node is not idle
+                    } else if (status.status === 'failed') {
+                        console.error(`❌ Node ${nodeId} failed:`, status.error);
+                        updateNodeStatus(nodeId, 'failed');
+                        console.log(`❌ Updated ${nodeId} status to 'failed'`);
+                        break;
+                    } else if (status.status === 'terminated') {
+                        console.log(`🛑 Node ${nodeId} was terminated - STOPPING POLLING`);
+                        updateNodeStatus(nodeId, 'stopped');
+                        console.log(`🛑 Updated ${nodeId} status to 'stopped' due to termination`);
+                        console.log(`🛑 Breaking out of polling loop for ${nodeId}`);
+                        break;
+                    } else if (status.status === 'running') {
+                        console.log(`⏳ Node ${nodeId} still running... (${status.status}) - Poll count: ${pollCount}`);
+                        await new Promise(res => setTimeout(res, pollInterval));
+                    } else {
+                        console.log(`❓ Unknown status for ${nodeId}: ${status.status} - continuing to poll`);
+                        await new Promise(res => setTimeout(res, pollInterval));
+                    }
+                } catch (error) {
+                    console.error(`❌ Error polling node ${nodeId}:`, error);
+                    console.error(`❌ Error details:`, {
+                        message: error.message,
+                        stack: error.stack,
+                        pollCount: pollCount
+                    });
+                    
+                    // Only set to failed if the node is not idle and not cancelled
+                    if (!cancelledNodesRef.current.has(nodeId)) {
                         setNodes(nds => nds.map(node =>
                             node.id === nodeId && node.data.status !== 'idle'
                                 ? { ...node, data: { ...node.data, status: 'failed' } }
                                 : node
                         ));
-                        break; // Exit the loop on error
+                        console.log(`❌ Set ${nodeId} status to 'failed' due to polling error`);
+                    } else {
+                        console.log(`🛑 Node ${nodeId} was cancelled during error, not setting to failed`);
                     }
-                }
-
-                // If we reached max retries, mark as failed
-                if (pollCount >= maxRetries) {
-                    console.warn(`⚠️ Node ${nodeId} exceeded maximum polling attempts (${maxRetries})`);
-                    updateNodeStatus(nodeId, 'failed');
+                    break; // Exit the loop on error
                 }
             }
+            
             return null;
         } catch (error) {
+            console.error(`❌ Error in runNodeAndWait for ${nodeId}:`, error);
+            console.error(`❌ Error details:`, {
+                message: error.message,
+                stack: error.stack,
+                nodeId: nodeId
+            });
+            
             // Only set to failed if the node is not idle
             setNodes(nds => nds.map(node =>
                 node.id === nodeId && node.data.status !== 'idle'
                     ? { ...node, data: { ...node.data, status: 'failed' } }
                     : node
             ));
+            console.log(`❌ Set ${nodeId} status to 'failed' due to execution error`);
         }
-    }, [areParamsApplied, paramKey, setAreParamsApplied, nodes, setNodes, updateNodeStatus, setNodeOutputs]);
+    }, [areParamsApplied, paramKey, setAreParamsApplied, nodes, setNodes, updateNodeStatus, setNodeOutputs, dependencyMap, nodeOutputs, validatedParams]);
 
     // Chain-dependency aware node runner (now uses refactored runNodeWithDependencies)
     const runNode = useCallback(async (nodeId) => {
@@ -2105,19 +2196,22 @@ export default function CompletenessControl({ instanceId }) {
                                                                                                 </div>
                                                                                             </div>
 
-                                                                                            {item.data_type === 'text' && item.top_values && (
-                                                                                                <div className="mb-3">
-                                                                                                    <h4 className="text-sm font-medium text-gray-700 mb-2">Top Values:</h4>
-                                                                                                    <div className="space-y-1">
-                                                                                                        {item.top_values.slice(0, 5).map((val, valIdx) => (
-                                                                                                            <div key={valIdx} className="flex justify-between text-sm">
-                                                                                                                <span className="text-gray-600 truncate" title={val.value}>
-                                                                                                                    {val.value.length > 30 ? val.value.substring(0, 30) + '...' : val.value}
-                                                                                                                </span>
-                                                                                                                <span className="text-gray-800 font-medium">{val.count}</span>
-                                                                                                            </div>
-                                                                                                        ))}
-                                                                                                    </div>
+                                                                                            {item.data_type === 'text' && item.top_values && item.top_values.length > 0 && (
+                                                                                                <div className="mt-2 pt-2 border-t border-gray-200">
+                                                                                                    <div className="text-xs text-gray-500 mb-1">Top 5 Values:</div>
+                                                                                                    {item.top_values.slice(0, 5).map((val, valIdx) => (
+                                                                                                        <div key={valIdx} className="flex justify-between text-xs mb-1">
+                                                                                                            <span className="text-gray-800 truncate flex-1 mr-2" title={val.value}>
+                                                                                                                {val.value.length > 20 ? 
+                                                                                                                    val.value.substring(0, 20) + '...' : 
+                                                                                                                    val.value
+                                                                                                                }
+                                                                                                            </span>
+                                                                                                            <span className="text-gray-600 font-medium">
+                                                                                                                {val.count}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    ))}
                                                                                                 </div>
                                                                                             )}
 

@@ -961,12 +961,16 @@ export default function CompletenessControl({ instanceId }) {
     const updateNodeStatus = useCallback((nodeId, status) => {
         console.log(`Node ${nodeId} status updated to: ${status}`);
 
-        // Update node status
-        setNodes(nds => nds.map(node =>
-            node.id === nodeId
-                ? { ...node, data: { ...node.data, status } }
-                : node
-        ));
+        // Update node status with force re-render
+        setNodes(nds => {
+            const updatedNodes = nds.map(node =>
+                node.id === nodeId
+                    ? { ...node, data: { ...node.data, status } }
+                    : node
+            );
+            console.log(`Updated nodes for ${nodeId}:`, updatedNodes.find(n => n.id === nodeId)?.data.status);
+            return updatedNodes;
+        });
 
         // Update edge colors and labels based on source node status
         setEdges(eds => eds.map(edge => {
@@ -1461,7 +1465,7 @@ export default function CompletenessControl({ instanceId }) {
     ) => {
         // Cancel if node is in cancelledNodes
         if (cancelledNodesRef.current.has(nodeId)) {
-            console.log(`Node ${nodeId} dependency run cancelled.`);
+            console.log(`🛑 Node ${nodeId} dependency run cancelled - node was stopped/reset.`);
             return;
         }
         if (alreadyRun.has(nodeId) || nodeStatusMap[nodeId] === 'completed') return nodeOutputs[nodeId];
@@ -1480,7 +1484,7 @@ export default function CompletenessControl({ instanceId }) {
         }
         // Now run the node, passing prevOutputs
         if (cancelledNodesRef.current.has(nodeId)) {
-            console.log(`Node ${nodeId} run cancelled (post-deps).`);
+            console.log(`🛑 Node ${nodeId} run cancelled (post-deps) - node was stopped/reset.`);
             return;
         }
         const output = await runNodeFn(nodeId, prevOutputs);
@@ -1492,7 +1496,7 @@ export default function CompletenessControl({ instanceId }) {
     const runNodeAndWait = useCallback(async (nodeId, previousOutputs) => {
         // Cancel if node is in cancelledNodes
         if (cancelledNodesRef.current.has(nodeId)) {
-            console.log(`Node ${nodeId} run cancelled.`);
+            console.log(`🛑 Node ${nodeId} run cancelled - node was stopped/reset.`);
             return;
         }
         if (!areParamsApplied) {
@@ -1541,13 +1545,19 @@ export default function CompletenessControl({ instanceId }) {
                 let pollCount = 0;
 
                 while (pollCount < maxRetries) {
+                    // Check if node has been cancelled
+                    if (cancelledNodesRef.current.has(nodeId)) {
+                        console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
+                        break;
+                    }
+
                     try {
                         pollCount++;
                         console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}/${maxRetries}`);
 
                         const status = await ApiService.getProcessStatus(response.process_id);
 
-                        if (status.status === 'completed' || status.status === 'failed') {
+                        if (status.status === 'completed' || status.status === 'failed' || status.status === 'stopped') {
                             console.log(`✅ Node ${nodeId} finished with status: ${status.status}`);
                             updateNodeStatus(nodeId, status.status);
 
@@ -1558,6 +1568,13 @@ export default function CompletenessControl({ instanceId }) {
                                 });
                                 return status.output;
                             }
+
+                            // Force a small delay to ensure UI updates
+                            if (status.status === 'stopped') {
+                                console.log(`🛑 Node ${nodeId} was stopped, ensuring UI update`);
+                                setTimeout(() => updateNodeStatus(nodeId, 'stopped'), 100);
+                            }
+
                             break; // Exit the loop
                         } else {
                             console.log(`⏳ Node ${nodeId} still running... (${status.status})`);
@@ -1618,7 +1635,11 @@ export default function CompletenessControl({ instanceId }) {
         // Reset nodes
         for (const id of toReset) {
             if (processIds[id]) {
-                try { await ApiService.resetProcess(processIds[id]); } catch { }
+                try {
+                    await ApiService.resetProcess(processIds[id]);
+                } catch (error) {
+                    console.error(`Failed to reset process ${processIds[id]} for node ${id}:`, error);
+                }
             }
             if (nodeTimeouts.current[id]) {
                 clearInterval(nodeTimeouts.current[id]);
@@ -1701,6 +1722,7 @@ export default function CompletenessControl({ instanceId }) {
         custom: (props) => (
             <CustomNode
                 {...props}
+                key={`${props.id}-${props.data.status}`} // Force re-render when status changes
                 nodeOutputs={nodeOutputs}
                 setSelectedNode={setSelectedNode}
                 setSelectedTab={setSelectedTab}
@@ -1723,6 +1745,10 @@ export default function CompletenessControl({ instanceId }) {
         try {
             // Add the stopped node to cancelled nodes
             cancelledNodesRef.current.add(nodeId);
+
+            // Immediately update UI to show stopping state
+            console.log(`🛑 User clicked stop for node ${nodeId}`);
+            updateNodeStatus(nodeId, 'stopped');
 
             // Get current values using refs to avoid dependencies
             const currentDownstreamMap = buildDownstreamMap(edgesRef.current);
@@ -1758,10 +1784,19 @@ export default function CompletenessControl({ instanceId }) {
                 return;
             }
             try {
+                // Update status immediately to show user feedback
+                updateNodeStatus(nodeId, 'stopped');
+                console.log(`🛑 Stopping process ${processId} for node ${nodeId}`);
+
                 await ApiService.stopProcess(processId);
+                console.log(`✅ Process ${processId} stopped successfully`);
+
+                // Double-check status is set to stopped
                 updateNodeStatus(nodeId, 'stopped');
             } catch (error) {
                 console.error(`Failed to stop process for node ${nodeId}:`, error);
+                // Even if API call fails, keep the stopped status in UI
+                updateNodeStatus(nodeId, 'stopped');
             }
         } catch (error) {
             console.error('Error in onStop:', error);
@@ -1962,22 +1997,32 @@ export default function CompletenessControl({ instanceId }) {
 
                             {/* Header Bar */}
                             <div className="flex items-center justify-between h-12 px-4 border-b border-slate-700/50">
-                                {/* DataView Button - Left */}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setIsBottomBarOpen(!isBottomBarOpen);
-                                        // Unlock data view when user explicitly closes it
-                                        if (isBottomBarOpen) {
-                                            setDataViewLocked(false);
+                                {/* Left side - DataView Button and Node Name */}
+                                <div className="flex items-center gap-3">
+                                    {/* DataView Button */}
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setIsBottomBarOpen(!isBottomBarOpen);
+                                            // Unlock data view when user explicitly closes it
+                                            if (isBottomBarOpen) {
+                                                setDataViewLocked(false);
 
-                                        }
-                                    }}
-                                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-medium transition-colors"
-                                >
-                                    <FaTable className="w-3 h-3" />
-                                    DataView
-                                </button>
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-sm font-medium transition-colors"
+                                    >
+                                        <FaTable className="w-3 h-3" />
+                                        DataView
+                                    </button>
+
+                                    {/* Node Name Display */}
+                                    {selectedNode && (
+                                        <span className="text-sm font-medium text-black">
+                                            {selectedNode.data?.fullName || selectedNode.data?.label || selectedNode.id}
+                                        </span>
+                                    )}
+                                </div>
 
                                 {/* Chevron Icon - Right */}
                                 <FaChevronUp

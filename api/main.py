@@ -192,11 +192,16 @@ async def process_node_async(process_id: str, node_id: str, params: RunParameter
         logger.info(f"[START] Node {node_id} (Process {process_id}) started at {datetime.now().isoformat()}")
         # Simulate processing time (45 seconds)
         await asyncio.sleep(10)
-        output = process_node(node_id, params, previous_outputs)
+        output = await process_node(node_id, params, previous_outputs)
         processes[process_id].status = "completed"
         processes[process_id].output = output
         logger.info(f"[END] Node {node_id} (Process {process_id}) completed at {datetime.now().isoformat()}")
         logger.info(f"📤 Output: {output}")
+    except asyncio.CancelledError:
+        logger.info(f"🛑 Node {node_id} (Process {process_id}) was cancelled")
+        processes[process_id].status = "stopped"
+        processes[process_id].error = "Process stopped by user"
+        raise  # Re-raise the cancellation
     except Exception as e:
         logger.error(f"❌ Error processing node {node_id}: {str(e)}")
         processes[process_id].status = "failed"
@@ -221,7 +226,7 @@ async def process_node_async(process_id: str, node_id: str, params: RunParameter
         }
         processes[process_id].output = error_output
 
-def process_node(node_id: str, params: RunParameters, previous_outputs: Optional[Dict[str, Any]] = None) -> Dict:
+async def process_node(node_id: str, params: RunParameters, previous_outputs: Optional[Dict[str, Any]] = None) -> Dict:
     """Main node processing function that routes to specific node handlers.
     
     Currently all nodes use the enhanced generic node processor for consistent
@@ -234,7 +239,7 @@ def process_node(node_id: str, params: RunParameters, previous_outputs: Optional
         raise Exception("Test failure: This is a simulated error for testing the failed node functionality. The node encountered a critical error during data processing.")
     
     # Always return a large random table for all nodes using enhanced processor
-    return process_generic_node(params)
+    return await process_generic_node(params)
 
 def process_config_comp_node(params: RunParameters) -> Dict:
     """Process the combined config node that handles both SRC and TGT configurations."""
@@ -991,7 +996,7 @@ def process_break_node(params: RunParameters, previous_outputs: Optional[Dict[st
         'fail_message': None
     }
 
-def process_generic_node(params: RunParameters) -> Dict:
+async def process_generic_node(params: RunParameters) -> Dict:
     """Process generic node with enhanced data generation and analysis.
     
     Generates a large dataset with mixed data types and comprehensive
@@ -1021,7 +1026,12 @@ def process_generic_node(params: RunParameters) -> Dict:
         return ''.join(random.choices(string.ascii_letters + string.digits + ' ', k=length))
 
     table = []
-    for _ in range(num_rows):
+    for row_idx in range(num_rows):
+        # Check for cancellation every 100 rows
+        if row_idx % 100 == 0:
+            await asyncio.sleep(0)  # Yield control to event loop for cancellation
+            logger.info(f"📊 Generated {row_idx}/{num_rows} rows...")
+        
         row = []
         for col in range(num_cols):
             if col in text_col_indices:
@@ -1038,6 +1048,11 @@ def process_generic_node(params: RunParameters) -> Dict:
     # Use full dataset for accurate statistics, but limit display data
     histogram_data = []
     for col_idx, header in enumerate(headers):
+        # Check for cancellation every 10 columns
+        if col_idx % 10 == 0:
+            await asyncio.sleep(0)  # Yield control to event loop for cancellation
+            logger.info(f"📊 Processing histogram for column {col_idx}/{len(headers)}...")
+        
         try:
             # Use full dataset for histogram analysis to get accurate statistics
             column_data = [row[col_idx] for row in table]

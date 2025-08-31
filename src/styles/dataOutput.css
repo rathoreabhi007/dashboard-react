@@ -1,5 +1,20 @@
 /* Data Output Styles - Optimized CSS */
 
+/* Node Name Display Component */
+.node-name-display {
+    margin-bottom: 8px;
+    padding: 4px 0;
+}
+
+
+
+/* Data Output Tab Container */
+.data-output-tab-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
 /* Main Container */
 .data-output-container {
     display: flex;

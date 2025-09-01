@@ -857,11 +857,16 @@ export default function CompletenessControl({ instanceId }) {
     const [validatedParams, setValidatedParams] = useState(null);
     const [selectedNodes] = useState(new Set());
 
+    // Synchronous ref for node outputs to avoid async state issues
+    const nodeOutputsRef = useRef({});
+
     const [nodeOutputs, setNodeOutputs] = useState(() => {
         const savedOutputs = localStorage.getItem(nodeOutputsKey);
         if (savedOutputs) {
             try {
                 const parsed = JSON.parse(savedOutputs);
+                // Initialize the ref with restored data
+                nodeOutputsRef.current = parsed;
                 console.log('🔄 Restored node outputs from localStorage:', Object.keys(parsed));
                 // Log table sizes for verification
                 Object.entries(parsed).forEach(([nodeId, output]) => {
@@ -877,6 +882,17 @@ export default function CompletenessControl({ instanceId }) {
         }
         return {};
     });
+
+    // Keep ref synchronized with state
+    useEffect(() => {
+        nodeOutputsRef.current = nodeOutputs;
+    }, [nodeOutputs]);
+
+    // Helper function to update both state and ref simultaneously
+    const updateNodeOutput = useCallback((nodeId, output) => {
+        nodeOutputsRef.current = { ...nodeOutputsRef.current, [nodeId]: output };
+        setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+    }, []);
 
     const cancelledNodesRef = useRef(new Set());
     const forceUpdate = useState({})[1];
@@ -1533,28 +1549,29 @@ export default function CompletenessControl({ instanceId }) {
                     return null;
                 }
                 
-                if (depNode.data.status !== 'completed') {
-                    console.error(`❌ Dependency ${depId} is not completed (status: ${depNode.data.status})`);
+                // Check if dependency has output using synchronous ref
+                const depOutput = nodeOutputsRef.current[depId];
+                
+                if (!depOutput) {
+                    console.error(`❌ Dependency ${depId} has no output (not completed)`);
+                    console.log(`🔍 Available outputs in ref:`, Object.keys(nodeOutputsRef.current));
+                    console.log(`🔍 Available outputs in state:`, Object.keys(nodeOutputs));
                     updateNodeStatus(nodeId, 'failed');
                     return null;
                 }
                 
-                if (nodeOutputs[depId]) {
-                    // Validate that the dependency output is successful
-                    const depOutput = nodeOutputs[depId];
-                    if (depOutput.status === 'failed' || depOutput.fail_message) {
-                        console.error(`❌ Dependency ${depId} failed: ${depOutput.fail_message}`);
-                        updateNodeStatus(nodeId, 'failed');
-                        return null;
-                    }
-                    
-                    previousOutputs[depId] = depOutput;
-                    console.log(`📤 Added previous output from ${depId} to ${nodeId}`);
-                } else {
-                    console.error(`❌ No previous output found for dependency ${depId}`);
+                // Validate that the dependency output is successful
+                if (depOutput.status === 'failed' || depOutput.fail_message) {
+                    console.error(`❌ Dependency ${depId} failed: ${depOutput.fail_message}`);
                     updateNodeStatus(nodeId, 'failed');
                     return null;
                 }
+                
+                console.log(`✅ Dependency ${depId} completed successfully`);
+                
+                // Add the dependency output to previous outputs
+                previousOutputs[depId] = depOutput;
+                console.log(`📤 Added previous output from ${depId} to ${nodeId}`);
             }
 
             // Prepare input parameters with proper structure for enhanced ETL
@@ -1637,18 +1654,18 @@ export default function CompletenessControl({ instanceId }) {
                             if (output && output.status === 'failed') {
                                 console.error(`❌ Node ${nodeId} returned failed status in output`);
                                 updateNodeStatus(nodeId, 'failed');
-                                setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                                updateNodeOutput(nodeId, output);
                                 return null;
                             }
                             
                             if (output && output.fail_message) {
                                 console.error(`❌ Node ${nodeId} has fail message: ${output.fail_message}`);
                                 updateNodeStatus(nodeId, 'failed');
-                                setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                                updateNodeOutput(nodeId, output);
                                 return null;
                             }
                             
-                            setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                            updateNodeOutput(nodeId, output);
                             console.log(`💾 Stored output for ${nodeId}`);
                             
                             updateNodeStatus(nodeId, 'completed');
@@ -1667,14 +1684,11 @@ export default function CompletenessControl({ instanceId }) {
                         console.log(`❌ Updated ${nodeId} status to 'failed'`);
                         
                         // Store the error output for display
-                        setNodeOutputs(prev => ({ 
-                            ...prev, 
-                            [nodeId]: { 
-                                status: 'failed', 
-                                fail_message: status.error || 'Unknown error occurred',
-                                execution_logs: [`Node ${nodeId} failed: ${status.error}`]
-                            } 
-                        }));
+                        updateNodeOutput(nodeId, { 
+                            status: 'failed', 
+                            fail_message: status.error || 'Unknown error occurred',
+                            execution_logs: [`Node ${nodeId} failed: ${status.error}`]
+                        });
                         break;
                     } else if (status.status === 'terminated') {
                         console.log(`🛑 Node ${nodeId} was terminated - STOPPING POLLING`);
@@ -1729,7 +1743,7 @@ export default function CompletenessControl({ instanceId }) {
             ));
             console.log(`❌ Set ${nodeId} status to 'failed' due to execution error`);
         }
-    }, [nodes, setNodes, updateNodeStatus, setNodeOutputs, dependencyMap, nodeOutputs, validatedParams]);
+    }, [nodes, setNodes, updateNodeStatus, updateNodeOutput, dependencyMap, nodeOutputs, validatedParams]);
 
     // Chain-dependency aware node runner with enhanced failed node handling
     const runNode = useCallback(async (nodeId) => {
@@ -2271,8 +2285,8 @@ export default function CompletenessControl({ instanceId }) {
                                                                                                     {item.top_values.slice(0, 5).map((val, valIdx) => (
                                                                                                         <div key={valIdx} className="flex justify-between text-xs mb-1">
                                                                                                             <span className="text-gray-800 truncate flex-1 mr-2" title={val.value}>
-                                                                                                                {val.value.length > 20 ? 
-                                                                                                                    val.value.substring(0, 20) + '...' : 
+                                                                                                                {val.value.length > 100 ? 
+                                                                                                                    val.value.substring(0, 100) + '...' : 
                                                                                                                     val.value
                                                                                                                 }
                                                                                                             </span>

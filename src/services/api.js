@@ -46,7 +46,7 @@ export class ApiService {
     }
 
     static async startCalculation(input) {
-        // Prepare the request body for the new backend structure
+        // Prepare the request body for the new backend structure with proper previous outputs handling
         const requestBody = {
             parameters: {
                 expectedRunDate: input.parameters?.expectedRunDate || "2024-01-01",
@@ -56,9 +56,51 @@ export class ApiService {
                 runEnv: input.parameters?.runEnv || "production",
                 tempFilePath: input.parameters?.tempFilePath || "/tmp"
             },
-            previous_outputs: input.previousOutputs || null,
+            previous_outputs: null, // Initialize as null
             custom_params: input.customParams || null
         };
+
+        // Process previous outputs with proper validation and structure
+        if (input.previousOutputs && Object.keys(input.previousOutputs).length > 0) {
+            console.log('📤 Processing previous outputs for enhanced ETL system');
+            
+            const processedOutputs = {};
+            
+            for (const [nodeId, output] of Object.entries(input.previousOutputs)) {
+                // Validate that the output is successful
+                if (output && output.status !== 'failed' && !output.fail_message) {
+                    processedOutputs[nodeId] = {
+                        status: output.status || 'success',
+                        calculation_results: output.calculation_results || {},
+                        histogram_data: output.histogram_data || [],
+                        count: output.count || '0',
+                        file_info: output.file_info || null,
+                        input_file_info: output.input_file_info || null,
+                        execution_logs: output.execution_logs || [],
+                        step_type: output.step_type || nodeId,
+                        processed_at: output.processed_at || new Date().toISOString()
+                    };
+                    
+                    console.log(`📤 Added previous output from ${nodeId} with file info:`, output.file_info);
+                } else {
+                    console.warn(`⚠️ Skipping failed previous output from ${nodeId}:`, output?.fail_message || 'Unknown error');
+                }
+            }
+            
+            if (Object.keys(processedOutputs).length > 0) {
+                requestBody.previous_outputs = processedOutputs;
+                console.log(`📤 Sending ${Object.keys(processedOutputs).length} previous outputs to backend`);
+            } else {
+                console.warn('⚠️ No valid previous outputs to send');
+            }
+        }
+
+        console.log('📤 Request body prepared:', {
+            nodeId: input.nodeId,
+            hasPreviousOutputs: !!requestBody.previous_outputs,
+            previousOutputKeys: requestBody.previous_outputs ? Object.keys(requestBody.previous_outputs) : [],
+            customParams: requestBody.custom_params
+        });
 
         const response = await fetch(`${API_BASE_URL}/run/${input.nodeId}`, {
             method: 'POST',
@@ -69,7 +111,9 @@ export class ApiService {
         });
         
         if (!response.ok) {
-            throw new Error(`Failed to start calculation for node ${input.nodeId}`);
+            const errorText = await response.text();
+            console.error(`❌ API Error for ${input.nodeId}:`, errorText);
+            throw new Error(`Failed to start calculation for node ${input.nodeId}: ${errorText}`);
         }
         
         const result = await response.json();

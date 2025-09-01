@@ -1504,7 +1504,7 @@ export default function CompletenessControl({ instanceId }) {
         return output;
     }, [updateNodeStatus]);
 
-    // Enhanced node runner with detailed logging
+    // Enhanced node runner with detailed logging and proper failed node handling
     const runNodeAndWait = useCallback(async (nodeId) => {
         console.log(`🚀 Starting runNodeAndWait for node: ${nodeId}`);
         
@@ -1518,22 +1518,46 @@ export default function CompletenessControl({ instanceId }) {
 
             console.log(`📋 Preparing to run node: ${nodeId}`);
             
-            // Get node outputs for previous steps
+            // Get node outputs for previous steps with proper validation
             const previousOutputs = {};
             const dependencies = dependencyMap[nodeId] || [];
             
             console.log(`🔗 Dependencies for ${nodeId}:`, dependencies);
             
-            dependencies.forEach(depId => {
+            // Validate that all dependencies completed successfully
+            for (const depId of dependencies) {
+                const depNode = nodes.find(n => n.id === depId);
+                if (!depNode) {
+                    console.error(`❌ Dependency node ${depId} not found`);
+                    updateNodeStatus(nodeId, 'failed');
+                    return null;
+                }
+                
+                if (depNode.data.status !== 'completed') {
+                    console.error(`❌ Dependency ${depId} is not completed (status: ${depNode.data.status})`);
+                    updateNodeStatus(nodeId, 'failed');
+                    return null;
+                }
+                
                 if (nodeOutputs[depId]) {
-                    previousOutputs[depId] = nodeOutputs[depId];
+                    // Validate that the dependency output is successful
+                    const depOutput = nodeOutputs[depId];
+                    if (depOutput.status === 'failed' || depOutput.fail_message) {
+                        console.error(`❌ Dependency ${depId} failed: ${depOutput.fail_message}`);
+                        updateNodeStatus(nodeId, 'failed');
+                        return null;
+                    }
+                    
+                    previousOutputs[depId] = depOutput;
                     console.log(`📤 Added previous output from ${depId} to ${nodeId}`);
                 } else {
-                    console.log(`⚠️ No previous output found for dependency ${depId}`);
+                    console.error(`❌ No previous output found for dependency ${depId}`);
+                    updateNodeStatus(nodeId, 'failed');
+                    return null;
                 }
-            });
+            }
 
-            // Prepare input parameters
+            // Prepare input parameters with proper structure for enhanced ETL
             const input = {
                 nodeId: nodeId,
                 parameters: validatedParams,
@@ -1563,12 +1587,11 @@ export default function CompletenessControl({ instanceId }) {
             updateNodeStatus(nodeId, 'running');
             console.log(`🔄 Updated ${nodeId} status to 'running'`);
 
-            // Poll for completion with enhanced logging
+            // Poll for completion with enhanced logging and failed status handling
             const pollInterval = 5000; // 5 seconds
             let pollCount = 0;
 
             console.log(`⏰ Starting polling for ${nodeId} - Interval: ${pollInterval}ms (No max attempts)`);
-
 
             while (true) {
                 pollCount++;
@@ -1610,6 +1633,21 @@ export default function CompletenessControl({ instanceId }) {
                                 outputKeys: output ? Object.keys(output) : null
                             });
                             
+                            // Validate the output before storing
+                            if (output && output.status === 'failed') {
+                                console.error(`❌ Node ${nodeId} returned failed status in output`);
+                                updateNodeStatus(nodeId, 'failed');
+                                setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                                return null;
+                            }
+                            
+                            if (output && output.fail_message) {
+                                console.error(`❌ Node ${nodeId} has fail message: ${output.fail_message}`);
+                                updateNodeStatus(nodeId, 'failed');
+                                setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
+                                return null;
+                            }
+                            
                             setNodeOutputs(prev => ({ ...prev, [nodeId]: output }));
                             console.log(`💾 Stored output for ${nodeId}`);
                             
@@ -1627,6 +1665,16 @@ export default function CompletenessControl({ instanceId }) {
                         console.error(`❌ Node ${nodeId} failed:`, status.error);
                         updateNodeStatus(nodeId, 'failed');
                         console.log(`❌ Updated ${nodeId} status to 'failed'`);
+                        
+                        // Store the error output for display
+                        setNodeOutputs(prev => ({ 
+                            ...prev, 
+                            [nodeId]: { 
+                                status: 'failed', 
+                                fail_message: status.error || 'Unknown error occurred',
+                                execution_logs: [`Node ${nodeId} failed: ${status.error}`]
+                            } 
+                        }));
                         break;
                     } else if (status.status === 'terminated') {
                         console.log(`🛑 Node ${nodeId} was terminated - STOPPING POLLING`);
@@ -1681,12 +1729,23 @@ export default function CompletenessControl({ instanceId }) {
             ));
             console.log(`❌ Set ${nodeId} status to 'failed' due to execution error`);
         }
-    }, [areParamsApplied, paramKey, setAreParamsApplied, nodes, setNodes, updateNodeStatus, setNodeOutputs, dependencyMap, nodeOutputs, validatedParams]);
+    }, [nodes, setNodes, updateNodeStatus, setNodeOutputs, dependencyMap, nodeOutputs, validatedParams]);
 
-    // Chain-dependency aware node runner (now uses refactored runNodeWithDependencies)
+    // Chain-dependency aware node runner with enhanced failed node handling
     const runNode = useCallback(async (nodeId) => {
         cancelledNodesRef.current = new Set();
         try {
+            // Check if any dependencies have failed
+            const dependencies = dependencyMap[nodeId] || [];
+            for (const depId of dependencies) {
+                const depNode = nodes.find(n => n.id === depId);
+                if (depNode && depNode.data.status === 'failed') {
+                    console.error(`❌ Cannot run ${nodeId}: dependency ${depId} has failed`);
+                    updateNodeStatus(nodeId, 'failed');
+                    return;
+                }
+            }
+            
             await runNodeWithDependencies(
                 nodeId,
                 runNodeAndWait,
@@ -1695,9 +1754,11 @@ export default function CompletenessControl({ instanceId }) {
                 nodeOutputs
             );
         } catch (err) {
+            console.error(`❌ Error in runNode for ${nodeId}:`, err);
+            updateNodeStatus(nodeId, 'failed');
             alert(err instanceof Error ? err.message : String(err));
         }
-    }, [dependencyMap, nodeStatusMap, runNodeAndWait, nodeOutputs, runNodeWithDependencies]);
+    }, [dependencyMap, nodeStatusMap, runNodeAndWait, nodeOutputs, runNodeWithDependencies, nodes, updateNodeStatus]);
 
     // Downstream reset logic
     const resetNodeAndDownstream = useCallback(async (nodeId) => {
@@ -2069,6 +2130,14 @@ export default function CompletenessControl({ instanceId }) {
                                     <FaTable className="w-3 h-3" />
                                     DataView
                                 </button>
+
+                                {/* Selected Node Name - Center */}
+                                {selectedNode && (
+                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 border border-slate-300 rounded text-sm font-medium text-slate-700">
+                                        <span className="font-semibold">Node:</span>
+                                        <span className="text-slate-800">{selectedNode.data.fullName}</span>
+                                    </div>
+                                )}
 
                                 {/* Chevron Icon - Right */}
                                 <FaChevronUp

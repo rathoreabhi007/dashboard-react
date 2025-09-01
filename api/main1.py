@@ -132,18 +132,34 @@ def setup_scheduled_cleanup(hour: int = 23, minute: int = 0, timezone: str = "UT
         return False
 
 def merge_previous_outputs_to_params(params: Dict[str, Any], previous_outputs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Merge previous outputs into the parameters dictionary"""
+    """Merge previous outputs into the parameters dictionary with enhanced ETL support"""
     if previous_outputs:
+        logger.info(f"📋 Processing {len(previous_outputs)} previous outputs for enhanced ETL system")
+        
         # Add previous outputs to params
         params['previous_outputs'] = previous_outputs
         
         # Extract specific data from previous outputs if available
         for step_name, output in previous_outputs.items():
             if isinstance(output, dict):
+                # Validate that the previous output is successful
+                if output.get('status') == 'failed' or output.get('fail_message'):
+                    logger.error(f"❌ Previous output from {step_name} has failed status: {output.get('fail_message', 'Unknown error')}")
+                    continue
+                
                 # Add step-specific data to params
                 params[f'{step_name}_data'] = output.get('calculation_results', {})
-                params[f'{step_name}_status'] = output.get('status', 'unknown')
+                params[f'{step_name}_status'] = output.get('status', 'success')
                 params[f'{step_name}_histogram'] = output.get('histogram_data', [])
+                
+                # Enhanced ETL: Add file information for CSV file flow
+                if output.get('file_info'):
+                    params[f'{step_name}_file_info'] = output['file_info']
+                    logger.info(f"📁 Added file info from {step_name}: {output['file_info'].get('file_path', 'Unknown path')}")
+                
+                if output.get('input_file_info'):
+                    params[f'{step_name}_input_file_info'] = output['input_file_info']
+                    logger.info(f"📖 Added input file info from {step_name}: {output['input_file_info'].get('file_path', 'Unknown path')}")
                 
                 # If there's table data, add it
                 if 'calculation_results' in output and 'table' in output['calculation_results']:
@@ -152,6 +168,10 @@ def merge_previous_outputs_to_params(params: Dict[str, Any], previous_outputs: O
                 # If there's headers data, add it
                 if 'calculation_results' in output and 'headers' in output['calculation_results']:
                     params[f'{step_name}_headers'] = output['calculation_results']['headers']
+                
+                logger.info(f"✅ Successfully processed previous output from {step_name}")
+            else:
+                logger.warning(f"⚠️ Previous output from {step_name} is not a dictionary: {type(output)}")
     
     return params
 
@@ -247,11 +267,27 @@ async def run_etl_step(step_name: str, request: ETLStepRequest):
         for key, value in params.items():
             logger.info(f"  - {key}: {value}")
         
-        # Log previous outputs
+        # Log previous outputs and validate them
         if request.previous_outputs:
             logger.info("📋 Previous outputs received:")
             for node_id, output in request.previous_outputs.items():
                 logger.info(f"  - From step {node_id}: {type(output)}")
+                
+                # Validate that previous outputs are successful
+                if isinstance(output, dict):
+                    if output.get('status') == 'failed' or output.get('fail_message'):
+                        error_msg = f"Cannot run {step_name}: dependency {node_id} has failed - {output.get('fail_message', 'Unknown error')}"
+                        logger.error(f"❌ {error_msg}")
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=error_msg
+                        )
+                    else:
+                        logger.info(f"✅ Previous output from {node_id} is valid (status: {output.get('status', 'unknown')})")
+                else:
+                    logger.warning(f"⚠️ Previous output from {node_id} is not a dictionary: {type(output)}")
+        else:
+            logger.info("📋 No previous outputs received")
         
         # Merge previous outputs into params
         params = merge_previous_outputs_to_params(params, request.previous_outputs)
@@ -267,6 +303,9 @@ async def run_etl_step(step_name: str, request: ETLStepRequest):
             step_name=step_name
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error(f"Error starting ETL task: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

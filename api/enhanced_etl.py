@@ -1,0 +1,831 @@
+import random
+import string
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import logging
+import os
+import json
+from pathlib import Path
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create data directory if it doesn't exist
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+# Hardcoded keys for file paths between nodes
+FILE_KEYS = {
+    'reading_config_comp': 'config_data.csv',
+    'read_src_comp': 'source_data.csv',
+    'read_tgt_comp': 'target_data.csv',
+    'pre_harmonisation_src_comp': 'pre_harmonisation_src.csv',
+    'harmonisation_src_comp': 'harmonisation_src.csv',
+    'enrichment_file_search_src_comp': 'enrichment_search_src.csv',
+    'enrichment_src_comp': 'enrichment_src.csv',
+    'data_transform_src_comp': 'transform_src.csv',
+    'pre_harmonisation_tgt_comp': 'pre_harmonisation_tgt.csv',
+    'harmonisation_tgt_comp': 'harmonisation_tgt.csv',
+    'enrichment_file_search_tgt_comp': 'enrichment_search_tgt.csv',
+    'enrichment_tgt_comp': 'enrichment_tgt.csv',
+    'data_transform_tgt_comp': 'transform_tgt.csv',
+    'combine_data_comp': 'combined_data.csv',
+    'apply_rules_comp': 'rules_applied.csv',
+    'output_rules_comp': 'output_rules.csv',
+    'break_rolling_comp': 'break_rolling.csv',
+    'extract': 'extract_data.csv',
+    'transform': 'transform_data.csv',
+    'load': 'load_data.csv',
+    'validate': 'validate_data.csv',
+    'enrich': 'enrich_data.csv',
+    'aggregate': 'aggregate_data.csv',
+    'read_csv': 'read_csv_data.csv',
+    'read_parquet': 'read_parquet_data.csv',
+    'read_excel': 'read_excel_data.csv',
+    'convert_parquet': 'convert_parquet_data.csv',
+    'filter': 'filter_data.csv',
+    'join': 'join_data.csv',
+    'output': 'output_data.csv'
+}
+
+def error_handler(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
+            return {"status": "failed", "fail_message": str(e)}
+    return wrapper
+
+def generate_test_data(num_cols=20, num_rows=100, step_name="generic"):
+    """Generate test data with specified number of columns and rows"""
+    logger.info(f"📊 Generating test data: {num_cols} columns x {num_rows} rows for {step_name}")
+    
+    headers = [f"col_{i+1}" for i in range(num_cols)]
+    
+    # Randomly choose 30% of columns to be text columns
+    text_col_indices = set(random.sample(range(num_cols), k=max(1, int(num_cols * 0.3))))
+    
+    def random_text(length):
+        """Generate random text of specified length."""
+        return ''.join(random.choices(string.ascii_letters + string.digits + ' ', k=length))
+
+    table = []
+    for _ in range(num_rows):
+        row = []
+        for col in range(num_cols):
+            if col in text_col_indices:
+                row.append(random_text(random.randint(5, 20)))
+            else:
+                row.append(random.randint(1, 10000))
+        table.append(row)
+    
+    return headers, table
+
+def create_csv_file(headers, table, filename, step_name):
+    """Create a CSV file with the given data"""
+    file_path = DATA_DIR / filename
+    
+    try:
+        # Create DataFrame and save to CSV
+        df = pd.DataFrame(table, columns=headers)
+        df.to_csv(file_path, index=False)
+        
+        logger.info(f"💾 Created CSV file: {file_path} with {len(df)} rows and {len(df.columns)} columns")
+        
+        # Get file size
+        file_size = file_path.stat().st_size
+        logger.info(f"📁 File size: {file_size} bytes")
+        
+        return {
+            'file_path': str(file_path),
+            'file_size_bytes': file_size,
+            'rows': len(df),
+            'columns': len(df.columns),
+            'created_at': datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"❌ Error creating CSV file {file_path}: {e}")
+        raise
+
+def read_csv_file(file_path, max_rows=100):
+    """Read a CSV file and return data"""
+    try:
+        if not os.path.exists(file_path):
+            logger.warning(f"⚠️ File not found: {file_path}")
+            return None, None, None
+        
+        # Read CSV with pandas
+        df = pd.read_csv(file_path)
+        
+        # Limit rows for testing
+        if len(df) > max_rows:
+            df = df.head(max_rows)
+            logger.info(f"📊 Limited CSV to {max_rows} rows for testing")
+        
+        headers = df.columns.tolist()
+        table = df.values.tolist()
+        
+        logger.info(f"📖 Read CSV file: {file_path} with {len(df)} rows and {len(df.columns)} columns")
+        
+        return headers, table, {
+            'file_path': file_path,
+            'rows': len(df),
+            'columns': len(df.columns),
+            'read_at': datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"❌ Error reading CSV file {file_path}: {e}")
+        return None, None, None
+
+def process_generic_node_with_csv(params, step_name):
+    """Enhanced generic node processor that creates CSV files with proper failed dependency validation"""
+    start_time = datetime.now()
+    logger.info(f"🔄 Starting {step_name} with CSV file creation")
+    
+    # Validate previous outputs for failed status
+    if 'previous_outputs' in params:
+        for prev_step, output in params['previous_outputs'].items():
+            if isinstance(output, dict):
+                if output.get('status') == 'failed' or output.get('fail_message'):
+                    error_msg = f"❌ Cannot run {step_name}: dependency {prev_step} has failed - {output.get('fail_message', 'Unknown error')}"
+                    logger.error(error_msg)
+                    return {
+                        "status": "failed",
+                        "fail_message": error_msg,
+                        "step_type": step_name,
+                        "execution_logs": [error_msg],
+                        "run_parameters": params
+                    }
+    
+    # Get input file path from previous outputs if available
+    input_file_path = None
+    if 'previous_outputs' in params:
+        for prev_step, output in params['previous_outputs'].items():
+            if isinstance(output, dict) and 'file_info' in output:
+                input_file_path = output['file_info']['file_path']
+                logger.info(f"📋 Found input file from {prev_step}: {input_file_path}")
+                break
+    
+    # Generate or read data
+    if input_file_path and os.path.exists(input_file_path):
+        # Read from previous CSV file
+        headers, table, file_info = read_csv_file(input_file_path, max_rows=100)
+        if headers is None:
+            # Fallback to generating new data
+            headers, table = generate_test_data(20, 100, step_name)
+            file_info = None
+    else:
+        # Generate new test data
+        headers, table = generate_test_data(20, 100, step_name)
+        file_info = None
+    
+    # Create CSV file for this step
+    output_filename = FILE_KEYS.get(step_name, f"{step_name}_data.csv")
+    csv_info = create_csv_file(headers, table, output_filename, step_name)
+    
+    # Generate histogram data
+    histogram_data = []
+    for col_idx, header in enumerate(headers):
+        try:
+            column_data = [row[col_idx] for row in table]
+            
+            if isinstance(column_data[0], str):
+                # Text column analysis
+                value_counts = {}
+                for value in column_data:
+                    value_counts[value] = value_counts.get(value, 0) + 1
+                
+                top_values = sorted(value_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+                
+                histogram_data.append({
+                    'column_name': header,
+                    'data_type': 'text',
+                    'total_values': len(column_data),
+                    'unique_values': len(value_counts),
+                    'top_values': [{'value': str(val), 'count': count} for val, count in top_values],
+                    'summary': {
+                        'min_length': min(len(str(val)) for val in column_data),
+                        'max_length': max(len(str(val)) for val in column_data),
+                        'avg_length': sum(len(str(val)) for val in column_data) / len(column_data)
+                    }
+                })
+            else:
+                # Numeric column analysis
+                numeric_data = [float(val) for val in column_data]
+                histogram_data.append({
+                    'column_name': header,
+                    'data_type': 'numeric',
+                    'total_values': len(numeric_data),
+                    'unique_values': len(set(numeric_data)),
+                    'summary': {
+                        'min': min(numeric_data),
+                        'max': max(numeric_data),
+                        'mean': sum(numeric_data) / len(numeric_data),
+                        'median': sorted(numeric_data)[len(numeric_data)//2],
+                        'std_dev': (sum((x - sum(numeric_data)/len(numeric_data))**2 for x in numeric_data) / len(numeric_data))**0.5
+                    }
+                })
+        except Exception as e:
+            logger.warning(f"Error processing histogram data for column {header}: {str(e)}")
+            histogram_data.append({
+                'column_name': header,
+                'data_type': 'unknown',
+                'total_values': len(table),
+                'unique_values': 0,
+                'summary': {'error': str(e)}
+            })
+    
+    processing_time = (datetime.now() - start_time).total_seconds()
+    logger.info(f"✅ {step_name} processing completed in {processing_time:.2f} seconds")
+    
+    return {
+        "status": "success",
+        "run_parameters": params,
+        "step_type": step_name,
+        "execution_logs": [
+            f"Starting {step_name} processing at {datetime.now().isoformat()}",
+            f"Processing with environment: {params.get('runEnv', 'unknown')}",
+            f"Generated/Read table with {len(headers)} columns and {len(table)} rows",
+            f"Created CSV file: {csv_info['file_path']}",
+            f"Processing completed successfully in {processing_time:.2f} seconds"
+        ],
+        "calculation_results": {
+            "headers": headers,
+            "table": table[:50],  # Send only first 50 rows to frontend
+            "processed_at": datetime.now().isoformat(),
+            "environment": params.get('runEnv', 'unknown'),
+            "table_size": f"{len(headers)}x{len(table)}",
+            "total_rows_generated": len(table),
+            "processing_time_seconds": processing_time
+        },
+        'histogram_data': histogram_data,
+        'count': str(len(table)),
+        'fail_message': None,
+        'file_info': csv_info,
+        'input_file_info': file_info
+    }
+
+# Completeness Control Step Functions
+
+@error_handler
+def reading_config_comp(params):
+    """Reading Configuration Component"""
+    logger.info(f"🔄 Starting Reading Config Component")
+    
+    result = process_generic_node_with_csv(params, 'reading_config_comp')
+    
+    # Check if the result indicates a failed dependency
+    if result.get('status') == 'failed':
+        return result
+    
+    result['config_details'] = {
+        'config_files_processed': random.randint(1, 5),
+        'config_validation_passed': True,
+        'config_quality_score': random.uniform(0.95, 0.99),
+        'config_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def read_src_comp(params):
+    """Read Source Component"""
+    logger.info(f"🔄 Starting Read Source Component")
+    
+    result = process_generic_node_with_csv(params, 'read_src_comp')
+    
+    # Check if the result indicates a failed dependency
+    if result.get('status') == 'failed':
+        return result
+    
+    result['src_details'] = {
+        'source_files_read': random.randint(10, 50),
+        'source_data_quality': random.uniform(0.85, 0.95),
+        'source_records_processed': int(result['count']),
+        'source_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def read_tgt_comp(params):
+    """Read Target Component"""
+    logger.info(f"🔄 Starting Read Target Component")
+    
+    result = process_generic_node_with_csv(params, 'read_tgt_comp')
+    
+    # Check if the result indicates a failed dependency
+    if result.get('status') == 'failed':
+        return result
+    
+    result['tgt_details'] = {
+        'target_files_read': random.randint(5, 20),
+        'target_data_quality': random.uniform(0.90, 0.98),
+        'target_records_processed': int(result['count']),
+        'target_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def pre_harmonisation_src_comp(params):
+    """Pre-Harmonisation Source Component"""
+    logger.info(f"🔄 Starting Pre-Harmonisation Source Component")
+    
+    result = process_generic_node_with_csv(params, 'pre_harmonisation_src_comp')
+    result['pre_harmonisation_src_details'] = {
+        'pre_harmonisation_rules_applied': random.randint(5, 15),
+        'data_cleansing_performed': True,
+        'harmonisation_quality_score': random.uniform(0.88, 0.96),
+        'pre_harmonisation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def harmonisation_src_comp(params):
+    """Harmonisation Source Component"""
+    logger.info(f"🔄 Starting Harmonisation Source Component")
+    
+    result = process_generic_node_with_csv(params, 'harmonisation_src_comp')
+    result['harmonisation_src_details'] = {
+        'harmonisation_rules_applied': random.randint(8, 20),
+        'data_standardization_performed': True,
+        'harmonisation_quality_score': random.uniform(0.90, 0.97),
+        'harmonisation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def enrichment_file_search_src_comp(params):
+    """Enrichment File Search Source Component"""
+    logger.info(f"🔄 Starting Enrichment File Search Source Component")
+    
+    result = process_generic_node_with_csv(params, 'enrichment_file_search_src_comp')
+    result['enrichment_file_search_src_details'] = {
+        'enrichment_files_found': random.randint(3, 12),
+        'enrichment_file_quality': random.uniform(0.85, 0.95),
+        'enrichment_search_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def enrichment_src_comp(params):
+    """Enrichment Source Component"""
+    logger.info(f"🔄 Starting Enrichment Source Component")
+    
+    result = process_generic_node_with_csv(params, 'enrichment_src_comp')
+    result['enrichment_src_details'] = {
+        'enrichment_sources_used': random.randint(2, 8),
+        'enrichment_fields_added': random.randint(5, 15),
+        'enrichment_quality_score': random.uniform(0.85, 0.95),
+        'enrichment_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def data_transform_src_comp(params):
+    """Data Transform Source Component"""
+    logger.info(f"🔄 Starting Data Transform Source Component")
+    
+    result = process_generic_node_with_csv(params, 'data_transform_src_comp')
+    result['data_transform_src_details'] = {
+        'transformation_rules_applied': random.randint(10, 25),
+        'data_transformation_quality': random.uniform(0.88, 0.96),
+        'transformation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def pre_harmonisation_tgt_comp(params):
+    """Pre-Harmonisation Target Component"""
+    logger.info(f"🔄 Starting Pre-Harmonisation Target Component")
+    
+    result = process_generic_node_with_csv(params, 'pre_harmonisation_tgt_comp')
+    result['pre_harmonisation_tgt_details'] = {
+        'pre_harmonisation_rules_applied': random.randint(5, 15),
+        'data_cleansing_performed': True,
+        'harmonisation_quality_score': random.uniform(0.88, 0.96),
+        'pre_harmonisation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def harmonisation_tgt_comp(params):
+    """Harmonisation Target Component"""
+    logger.info(f"🔄 Starting Harmonisation Target Component")
+    
+    result = process_generic_node_with_csv(params, 'harmonisation_tgt_comp')
+    result['harmonisation_tgt_details'] = {
+        'harmonisation_rules_applied': random.randint(8, 20),
+        'data_standardization_performed': True,
+        'harmonisation_quality_score': random.uniform(0.90, 0.97),
+        'harmonisation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def enrichment_file_search_tgt_comp(params):
+    """Enrichment File Search Target Component"""
+    logger.info(f"🔄 Starting Enrichment File Search Target Component")
+    
+    result = process_generic_node_with_csv(params, 'enrichment_file_search_tgt_comp')
+    result['enrichment_file_search_tgt_details'] = {
+        'enrichment_files_found': random.randint(3, 12),
+        'enrichment_file_quality': random.uniform(0.85, 0.95),
+        'enrichment_search_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def enrichment_tgt_comp(params):
+    """Enrichment Target Component"""
+    logger.info(f"🔄 Starting Enrichment Target Component")
+    
+    result = process_generic_node_with_csv(params, 'enrichment_tgt_comp')
+    result['enrichment_tgt_details'] = {
+        'enrichment_sources_used': random.randint(2, 8),
+        'enrichment_fields_added': random.randint(5, 15),
+        'enrichment_quality_score': random.uniform(0.85, 0.95),
+        'enrichment_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def data_transform_tgt_comp(params):
+    """Data Transform Target Component"""
+    logger.info(f"🔄 Starting Data Transform Target Component")
+    
+    result = process_generic_node_with_csv(params, 'data_transform_tgt_comp')
+    result['data_transform_tgt_details'] = {
+        'transformation_rules_applied': random.randint(10, 25),
+        'data_transformation_quality': random.uniform(0.88, 0.96),
+        'transformation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def combine_data_comp(params):
+    """Combine Data Component"""
+    logger.info(f"🔄 Starting Combine Data Component")
+    
+    result = process_generic_node_with_csv(params, 'combine_data_comp')
+    result['combine_data_details'] = {
+        'src_data_combined': True,
+        'tgt_data_combined': True,
+        'combination_strategy': 'inner_join',
+        'combination_quality_score': random.uniform(0.90, 0.98),
+        'combination_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def apply_rules_comp(params):
+    """Apply Rules Component"""
+    logger.info(f"🔄 Starting Apply Rules Component")
+    
+    result = process_generic_node_with_csv(params, 'apply_rules_comp')
+    result['apply_rules_details'] = {
+        'business_rules_applied': random.randint(15, 30),
+        'rule_validation_passed': True,
+        'rules_quality_score': random.uniform(0.92, 0.99),
+        'rules_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def output_rules_comp(params):
+    """Output Rules Component"""
+    logger.info(f"🔄 Starting Output Rules Component")
+    
+    result = process_generic_node_with_csv(params, 'output_rules_comp')
+    result['output_rules_details'] = {
+        'output_rules_generated': random.randint(5, 15),
+        'output_validation_passed': True,
+        'output_quality_score': random.uniform(0.94, 0.99),
+        'output_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def break_rolling_comp(params):
+    """Break Rolling Component"""
+    logger.info(f"🔄 Starting Break Rolling Component")
+    
+    result = process_generic_node_with_csv(params, 'break_rolling_comp')
+    result['break_rolling_details'] = {
+        'rolling_windows_processed': random.randint(3, 10),
+        'break_analysis_completed': True,
+        'rolling_quality_score': random.uniform(0.89, 0.97),
+        'rolling_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+# Legacy ETL functions for backward compatibility
+@error_handler
+def extract(params):
+    """Enhanced extract function with CSV file creation"""
+    logger.info(f"🔄 Starting EXTRACT step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'extract')
+    result['extract_details'] = {
+        'source_type': params.get('source_type', 'database'),
+        'extraction_method': params.get('extraction_method', 'full_load'),
+        'data_quality_score': random.uniform(0.85, 0.99),
+        'records_processed': int(result['count'])
+    }
+    
+    return result
+
+@error_handler
+def transform(params):
+    """Enhanced transform function with CSV file creation"""
+    logger.info(f"🔄 Starting TRANSFORM step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'transform')
+    result['transform_details'] = {
+        'transformation_rules_applied': random.randint(5, 20),
+        'data_cleansing_performed': True,
+        'data_validation_passed': True,
+        'transformation_quality_score': random.uniform(0.90, 0.99),
+        'records_transformed': int(result['count'])
+    }
+    
+    return result
+
+@error_handler
+def load(params):
+    """Enhanced load function with CSV file creation"""
+    logger.info(f"🔄 Starting LOAD step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'load')
+    result['load_details'] = {
+        'target_system': params.get('target_system', 'data_warehouse'),
+        'load_strategy': params.get('load_strategy', 'full_refresh'),
+        'load_performance_score': random.uniform(0.85, 0.99),
+        'records_loaded': int(result['count']),
+        'load_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+# Additional ETL functions
+@error_handler
+def validate(params):
+    """Data validation step with CSV file creation"""
+    logger.info(f"🔄 Starting VALIDATE step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'validate')
+    result['validation_details'] = {
+        'validation_rules_applied': random.randint(10, 30),
+        'validation_passed': True,
+        'data_quality_score': random.uniform(0.90, 0.99),
+        'validation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def enrich(params):
+    """Data enrichment step with CSV file creation"""
+    logger.info(f"🔄 Starting ENRICH step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'enrich')
+    result['enrichment_details'] = {
+        'enrichment_sources_used': random.randint(2, 8),
+        'enrichment_fields_added': random.randint(5, 15),
+        'enrichment_quality_score': random.uniform(0.85, 0.95),
+        'enrichment_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def aggregate(params):
+    """Data aggregation step with CSV file creation"""
+    logger.info(f"🔄 Starting AGGREGATE step with CSV file creation")
+    
+    result = process_generic_node_with_csv(params, 'aggregate')
+    result['aggregation_details'] = {
+        'aggregation_functions_applied': random.randint(3, 10),
+        'grouping_dimensions': random.randint(2, 6),
+        'aggregation_quality_score': random.uniform(0.90, 0.99),
+        'aggregation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+# Workflow Tool ETL Functions
+@error_handler
+def read_csv(params):
+    """Read CSV file operation with enhanced functionality"""
+    logger.info(f"🔄 Starting READ_CSV operation with enhanced functionality")
+    
+    # Extract parameters
+    file_path = params.get('file_path', '/path/to/file.csv')
+    delimiter = params.get('delimiter', ',')
+    encoding = params.get('encoding', 'utf-8')
+    header = params.get('header', True)
+    skip_rows = params.get('skip_rows', 0)
+    
+    logger.info(f"📁 Reading CSV: {file_path}, delimiter: {delimiter}, encoding: {encoding}")
+    
+    result = process_generic_node_with_csv(params, 'read_csv')
+    result['file_details'] = {
+        'file_path': file_path,
+        'delimiter': delimiter,
+        'encoding': encoding,
+        'has_header': header,
+        'skip_rows': skip_rows,
+        'file_size_mb': random.uniform(1.5, 15.0),
+        'read_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def read_parquet(params):
+    """Read Parquet file operation with enhanced functionality"""
+    logger.info(f"🔄 Starting READ_PARQUET operation with enhanced functionality")
+    
+    # Extract parameters
+    file_path = params.get('file_path', '/path/to/file.parquet')
+    columns = params.get('columns', '')
+    filters = params.get('filters', '')
+    
+    logger.info(f"📁 Reading Parquet: {file_path}")
+    
+    result = process_generic_node_with_csv(params, 'read_parquet')
+    result['file_details'] = {
+        'file_path': file_path,
+        'columns': columns.split(',') if columns else [],
+        'filters': filters,
+        'file_size_mb': random.uniform(0.5, 8.0),
+        'compression': 'snappy',
+        'read_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def read_excel(params):
+    """Read Excel file operation with enhanced functionality"""
+    logger.info(f"🔄 Starting READ_EXCEL operation with enhanced functionality")
+    
+    # Extract parameters
+    file_path = params.get('file_path', '/path/to/file.xlsx')
+    sheet_name = params.get('sheet_name', 'Sheet1')
+    header_row = params.get('header_row', 0)
+    skip_rows = params.get('skip_rows', 0)
+    
+    logger.info(f"📁 Reading Excel: {file_path}, sheet: {sheet_name}")
+    
+    result = process_generic_node_with_csv(params, 'read_excel')
+    result['file_details'] = {
+        'file_path': file_path,
+        'sheet_name': sheet_name,
+        'header_row': header_row,
+        'skip_rows': skip_rows,
+        'file_size_mb': random.uniform(2.0, 20.0),
+        'read_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def convert_parquet(params):
+    """Convert data to Parquet format with enhanced functionality"""
+    logger.info(f"🔄 Starting CONVERT_PARQUET operation with enhanced functionality")
+    
+    # Extract parameters
+    output_path = params.get('output_path', '/path/to/output.parquet')
+    compression = params.get('compression', 'snappy')
+    partition_by = params.get('partition_by', '')
+    
+    logger.info(f"💾 Converting to Parquet: {output_path}, compression: {compression}")
+    
+    result = process_generic_node_with_csv(params, 'convert_parquet')
+    result['conversion_details'] = {
+        'output_path': output_path,
+        'compression': compression,
+        'partition_by': partition_by.split(',') if partition_by else [],
+        'compression_ratio': random.uniform(0.3, 0.7),
+        'conversion_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def filter_data(params):
+    """Filter data operation with enhanced functionality"""
+    logger.info(f"🔄 Starting FILTER operation with enhanced functionality")
+    
+    # Extract parameters
+    condition = params.get('condition', 'column > 100')
+    case_sensitive = params.get('case_sensitive', False)
+    
+    logger.info(f"🔍 Filtering data with condition: {condition}")
+    
+    result = process_generic_node_with_csv(params, 'filter')
+    result['filter_details'] = {
+        'condition': condition,
+        'case_sensitive': case_sensitive,
+        'records_before_filter': int(result['count'] * random.uniform(1.2, 2.0)),
+        'records_after_filter': int(result['count']),
+        'filter_efficiency': random.uniform(0.4, 0.8),
+        'filter_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def join_data(params):
+    """Join data operation with enhanced functionality"""
+    logger.info(f"🔄 Starting JOIN operation with enhanced functionality")
+    
+    # Extract parameters
+    join_type = params.get('join_type', 'inner')
+    left_key = params.get('left_key', 'id')
+    right_key = params.get('right_key', 'id')
+    suffixes = params.get('suffixes', '_x,_y')
+    
+    logger.info(f"🔗 Joining data: {join_type} join on {left_key} = {right_key}")
+    
+    result = process_generic_node_with_csv(params, 'join')
+    result['join_details'] = {
+        'join_type': join_type,
+        'left_key': left_key,
+        'right_key': right_key,
+        'suffixes': suffixes.split(',') if suffixes else ['_x', '_y'],
+        'left_records': int(result['count'] * random.uniform(0.8, 1.2)),
+        'right_records': int(result['count'] * random.uniform(0.8, 1.2)),
+        'joined_records': int(result['count']),
+        'join_efficiency': random.uniform(0.7, 0.95),
+        'join_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def aggregate_data(params):
+    """Aggregate data operation with enhanced functionality"""
+    logger.info(f"🔄 Starting AGGREGATE operation with enhanced functionality")
+    
+    # Extract parameters
+    group_by = params.get('group_by', 'date,region')
+    aggregations = params.get('aggregations', 'sum:amount,count:id,mean:value')
+    sort_by = params.get('sort_by', 'date DESC')
+    
+    logger.info(f"📊 Aggregating data: group by {group_by}")
+    
+    result = process_generic_node_with_csv(params, 'aggregate')
+    result['aggregation_details'] = {
+        'group_by': group_by.split(',') if group_by else [],
+        'aggregations': aggregations.split(',') if aggregations else [],
+        'sort_by': sort_by,
+        'input_records': int(result['count'] * random.uniform(3.0, 10.0)),
+        'output_records': int(result['count']),
+        'aggregation_efficiency': random.uniform(0.8, 0.98),
+        'aggregation_timestamp': datetime.now().isoformat()
+    }
+    
+    return result
+
+@error_handler
+def data_output(params):
+    """Data output operation with enhanced functionality"""
+    logger.info(f"🔄 Starting DATA_OUTPUT operation with enhanced functionality")
+    
+    # Extract parameters
+    output_type = params.get('output_type', 'preview')
+    max_rows = params.get('max_rows', 1000)
+    
+    logger.info(f"📤 Outputting data: type={output_type}, max_rows={max_rows}")
+    
+    result = process_generic_node_with_csv(params, 'output')
+    result['output_details'] = {
+        'output_type': output_type,
+        'max_rows': max_rows,
+        'total_records': int(result['count']),
+        'output_records': min(max_rows, int(result['count'])),
+        'output_format': 'table',
+        'output_timestamp': datetime.now().isoformat()
+    }
+    
+    return result

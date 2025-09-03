@@ -334,7 +334,6 @@ def read_tgt_comp(params):
 def pre_harmonisation_src_comp(params):
     """Pre-Harmonisation Source Component"""
     logger.info(f"🔄 Starting Pre-Harmonisation Source Component")
-    raise ValueError("Pre-Harmonisation Source Component failed")
     result = process_generic_node_with_csv(params, 'pre_harmonisation_src_comp')
     result['pre_harmonisation_src_details'] = {
         'pre_harmonisation_rules_applied': random.randint(5, 15),

@@ -852,7 +852,7 @@ export default function CompletenessControl({ instanceId }) {
         }
         return {};
     });
-    const [isRunningAll, setIsRunningAll] = useState(false);
+
     const [invalidFields, setInvalidFields] = useState(new Set());
     const [validatedParams, setValidatedParams] = useState(null);
     const [selectedNodes] = useState(new Set());
@@ -1068,7 +1068,16 @@ export default function CompletenessControl({ instanceId }) {
     // Cleanup timeouts on unmount
     useEffect(() => {
         return () => {
-            Object.values(nodeTimeouts.current).forEach(timeout => clearTimeout(timeout));
+            // Clear all timeouts and intervals
+            Object.values(nodeTimeouts.current).forEach(timeout => {
+                if (typeof timeout === 'number') {
+                    clearTimeout(timeout);
+                    clearInterval(timeout);
+                }
+            });
+            // Reset refs to prevent memory leaks
+            nodeTimeouts.current = {};
+            cancelledNodesRef.current.clear();
         };
     }, []);
 
@@ -1169,7 +1178,6 @@ export default function CompletenessControl({ instanceId }) {
                             <option value="development" className="text-black">Development</option>
                             <option value="staging" className="text-black">Staging</option>
                             <option value="production" className="text-black">Production</option>
-                            <option value="TEST_FAILURE" className="text-black text-red-600 font-semibold">🧪 TEST_FAILURE (Simulate Error)</option>
                         </select>
                     ) : (
                         <input
@@ -1246,90 +1254,7 @@ export default function CompletenessControl({ instanceId }) {
         console.log('🧹 Reset all nodes and cleared all data');
     }, [setNodes, nodeOutputsKey, forceUpdate, processIdsKey, uiStateKey]);
 
-    // Function to run nodes in sequence
-    const runAllNodes = async () => {
-        if (!areParamsApplied) {
-            console.log('❌ Cannot run all nodes: Parameters have not been applied');
-            return;
-        }
 
-        // Get parameters from localStorage
-        const storedParams = localStorage.getItem(paramKey);
-        if (!storedParams) {
-            console.log('❌ Cannot run all nodes: No validated parameters found');
-            setAreParamsApplied(false);
-            return;
-        }
-
-        setIsRunningAll(true);
-        const nodeSequence = [
-            // Top flow
-            'reading_config_comp',
-            'read_src_comp',
-            'pre_harmonisation_src_comp',
-            'harmonisation_src_comp',
-            'enrichment_file_search_src_comp',
-            'enrichment_src_comp',
-            'data_transform_src_comp',
-            // Bottom flow
-            'read_tgt_comp',
-            'pre_harmonisation_tgt_comp',
-            'harmonisation_tgt_comp',
-            'enrichment_file_search_tgt_comp',
-            'enrichment_tgt_comp',
-            'data_transform_tgt_comp',
-            // Final flow
-            'combine_data_comp',
-            'apply_rules_comp',
-            'output_rules_comp',
-            'break_rolling_comp'
-        ];
-
-        try {
-            for (const nodeId of nodeSequence) {
-                const node = nodes.find(n => n.id === nodeId);
-                if (node?.data.onRun) {
-                    await new Promise((resolve, reject) => {
-                        let checkInterval;
-
-                        const checkStatus = () => {
-                            // Check if node has been cancelled
-                            if (cancelledNodesRef.current.has(nodeId)) {
-                                console.log(`🛑 Node ${nodeId} was cancelled during sequential execution, stopping polling`);
-                                clearInterval(checkInterval);
-                                resolve(); // Resolve instead of reject to continue with next nodes
-                                return;
-                            }
-
-                            const currentNode = nodes.find(n => n.id === nodeId);
-                            if (currentNode?.data.status === 'completed') {
-                                console.log(`✅ Node ${nodeId} completed in sequential execution`);
-                                clearInterval(checkInterval);
-                                resolve();
-                            } else if (currentNode?.data.status === 'failed') {
-                                console.log(`❌ Node ${nodeId} failed in sequential execution`);
-                                clearInterval(checkInterval);
-                                reject(new Error(`Node ${nodeId} failed`));
-                            } else if (currentNode?.data.status === 'stopped') {
-                                console.log(`🛑 Node ${nodeId} was stopped/terminated in sequential execution`);
-                                clearInterval(checkInterval);
-                                resolve(); // Resolve instead of reject to continue with next nodes
-                            } else {
-                                console.log(`⏳ Node ${nodeId} still running in sequential execution (${currentNode?.data.status})`);
-                            }
-                        };
-
-                        node.data.onRun(nodeId);
-                        checkInterval = setInterval(checkStatus, 5000); // Changed to 5 seconds
-                    });
-                }
-            }
-        } catch (error) {
-            console.error('Error in sequential execution:', error);
-        } finally {
-            setIsRunningAll(false);
-        }
-    };
 
     useEffect(() => {
         const handleMouseMove = (e) => {
@@ -1523,7 +1448,7 @@ export default function CompletenessControl({ instanceId }) {
     // Enhanced node runner with detailed logging and proper failed node handling
     const runNodeAndWait = useCallback(async (nodeId) => {
         console.log(`🚀 Starting runNodeAndWait for node: ${nodeId}`);
-        
+
         try {
             // Check if node is already running
             const currentNode = nodes.find(n => n.id === nodeId);
@@ -1533,13 +1458,13 @@ export default function CompletenessControl({ instanceId }) {
             }
 
             console.log(`📋 Preparing to run node: ${nodeId}`);
-            
+
             // Get node outputs for previous steps with proper validation
             const previousOutputs = {};
             const dependencies = dependencyMap[nodeId] || [];
-            
+
             console.log(`🔗 Dependencies for ${nodeId}:`, dependencies);
-            
+
             // Validate that all dependencies completed successfully
             for (const depId of dependencies) {
                 const depNode = nodes.find(n => n.id === depId);
@@ -1548,10 +1473,10 @@ export default function CompletenessControl({ instanceId }) {
                     updateNodeStatus(nodeId, 'failed');
                     return null;
                 }
-                
+
                 // Check if dependency has output using synchronous ref
                 const depOutput = nodeOutputsRef.current[depId];
-                
+
                 if (!depOutput) {
                     console.error(`❌ Dependency ${depId} has no output (not completed)`);
                     console.log(`🔍 Available outputs in ref:`, Object.keys(nodeOutputsRef.current));
@@ -1559,16 +1484,16 @@ export default function CompletenessControl({ instanceId }) {
                     updateNodeStatus(nodeId, 'failed');
                     return null;
                 }
-                
+
                 // Validate that the dependency output is successful
                 if (depOutput.status === 'failed' || depOutput.fail_message) {
                     console.error(`❌ Dependency ${depId} failed: ${depOutput.fail_message}`);
                     updateNodeStatus(nodeId, 'failed');
                     return null;
                 }
-                
+
                 console.log(`✅ Dependency ${depId} completed successfully`);
-                
+
                 // Add the dependency output to previous outputs
                 previousOutputs[depId] = depOutput;
                 console.log(`📤 Added previous output from ${depId} to ${nodeId}`);
@@ -1605,29 +1530,31 @@ export default function CompletenessControl({ instanceId }) {
             console.log(`🔄 Updated ${nodeId} status to 'running'`);
 
             // Poll for completion with enhanced logging and failed status handling
+            // IMPORTANT: Polling continues indefinitely as long as status is "running"
+            // This supports long-running ETL operations that may take hours
             const pollInterval = 5000; // 5 seconds
             let pollCount = 0;
 
-            console.log(`⏰ Starting polling for ${nodeId} - Interval: ${pollInterval}ms (No max attempts)`);
+            console.log(`⏰ Starting polling for ${nodeId} - Interval: ${pollInterval}ms (Will continue until completion)`);
 
-            while (true) {
+            while (true) { // Continue polling as long as status is running
                 pollCount++;
                 console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}`);
-                
+
                 // Check if node has been cancelled
                 if (cancelledNodesRef.current.has(nodeId)) {
                     console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
                     updateNodeStatus(nodeId, 'stopped');
                     return null;
                 }
-                
+
                 // Check if node status is already stopped (from onStop function)
                 const currentNode = nodes.find(n => n.id === nodeId);
                 if (currentNode?.data.status === 'stopped') {
                     console.log(`🛑 Node ${nodeId} is already stopped, stopping polling`);
                     return null;
                 }
-                
+
                 try {
                     const status = await ApiService.getProcessStatus(response.process_id);
                     console.log(`📊 Status response for ${nodeId}:`, {
@@ -1640,7 +1567,7 @@ export default function CompletenessControl({ instanceId }) {
 
                     if (status.status === 'completed') {
                         console.log(`✅ Node ${nodeId} completed successfully!`);
-                        
+
                         // Get the output
                         try {
                             const output = await ApiService.getProcessOutput(response.process_id);
@@ -1649,7 +1576,7 @@ export default function CompletenessControl({ instanceId }) {
                                 outputType: typeof output,
                                 outputKeys: output ? Object.keys(output) : null
                             });
-                            
+
                             // Validate the output before storing
                             if (output && output.status === 'failed') {
                                 console.error(`❌ Node ${nodeId} returned failed status in output`);
@@ -1657,20 +1584,20 @@ export default function CompletenessControl({ instanceId }) {
                                 updateNodeOutput(nodeId, output);
                                 return null;
                             }
-                            
+
                             if (output && output.fail_message) {
                                 console.error(`❌ Node ${nodeId} has fail message: ${output.fail_message}`);
                                 updateNodeStatus(nodeId, 'failed');
                                 updateNodeOutput(nodeId, output);
                                 return null;
                             }
-                            
+
                             updateNodeOutput(nodeId, output);
                             console.log(`💾 Stored output for ${nodeId}`);
-                            
+
                             updateNodeStatus(nodeId, 'completed');
                             console.log(`✅ Updated ${nodeId} status to 'completed'`);
-                            
+
                             return output;
                         } catch (outputError) {
                             console.error(`❌ Error getting output for ${nodeId}:`, outputError);
@@ -1682,10 +1609,10 @@ export default function CompletenessControl({ instanceId }) {
                         console.error(`❌ Node ${nodeId} failed:`, status.error);
                         updateNodeStatus(nodeId, 'failed');
                         console.log(`❌ Updated ${nodeId} status to 'failed'`);
-                        
+
                         // Store the error output for display
-                        updateNodeOutput(nodeId, { 
-                            status: 'failed', 
+                        updateNodeOutput(nodeId, {
+                            status: 'failed',
                             fail_message: status.error || 'Unknown error occurred',
                             execution_logs: [`Node ${nodeId} failed: ${status.error}`]
                         });
@@ -1703,6 +1630,23 @@ export default function CompletenessControl({ instanceId }) {
                         console.log(`❓ Unknown status for ${nodeId}: ${status.status} - continuing to poll`);
                         await new Promise(res => setTimeout(res, pollInterval));
                     }
+
+                    // Log polling progress for long-running operations
+                    if (pollCount % 12 === 0) { // Log every minute (12 * 5 seconds)
+                        console.log(`⏰ Node ${nodeId} has been running for ${Math.round(pollCount * 5 / 60)} minutes (${pollCount} polls)`);
+                    }
+
+                    // Safety check: Prevent runaway polling (emergency stop after 24 hours)
+                    if (pollCount > 17280) { // 24 hours = 17280 polls (5-second intervals)
+                        console.error(`🚨 EMERGENCY STOP: Node ${nodeId} has been polling for 24+ hours, stopping to prevent runaway`);
+                        updateNodeStatus(nodeId, 'failed');
+                        updateNodeOutput(nodeId, {
+                            status: 'failed',
+                            fail_message: 'Emergency stop: Node has been running for over 24 hours. Please check the backend process.',
+                            execution_logs: [`Emergency stop after 24+ hours of polling (${pollCount} attempts)`]
+                        });
+                        break;
+                    }
                 } catch (error) {
                     console.error(`❌ Error polling node ${nodeId}:`, error);
                     console.error(`❌ Error details:`, {
@@ -1710,7 +1654,7 @@ export default function CompletenessControl({ instanceId }) {
                         stack: error.stack,
                         pollCount: pollCount
                     });
-                    
+
                     // Only set to failed if the node is not idle and not cancelled
                     if (!cancelledNodesRef.current.has(nodeId)) {
                         setNodes(nds => nds.map(node =>
@@ -1725,7 +1669,7 @@ export default function CompletenessControl({ instanceId }) {
                     break; // Exit the loop on error
                 }
             }
-            
+
             return null;
         } catch (error) {
             console.error(`❌ Error in runNodeAndWait for ${nodeId}:`, error);
@@ -1734,7 +1678,7 @@ export default function CompletenessControl({ instanceId }) {
                 stack: error.stack,
                 nodeId: nodeId
             });
-            
+
             // Only set to failed if the node is not idle
             setNodes(nds => nds.map(node =>
                 node.id === nodeId && node.data.status !== 'idle'
@@ -1759,7 +1703,7 @@ export default function CompletenessControl({ instanceId }) {
                     return;
                 }
             }
-            
+
             await runNodeWithDependencies(
                 nodeId,
                 runNodeAndWait,
@@ -2285,8 +2229,8 @@ export default function CompletenessControl({ instanceId }) {
                                                                                                     {item.top_values.slice(0, 5).map((val, valIdx) => (
                                                                                                         <div key={valIdx} className="flex justify-between text-xs mb-1">
                                                                                                             <span className="text-gray-800 truncate flex-1 mr-2" title={val.value}>
-                                                                                                                {val.value.length > 100 ? 
-                                                                                                                    val.value.substring(0, 100) + '...' : 
+                                                                                                                {val.value.length > 100 ?
+                                                                                                                    val.value.substring(0, 100) + '...' :
                                                                                                                     val.value
                                                                                                                 }
                                                                                                             </span>
@@ -2554,13 +2498,13 @@ export default function CompletenessControl({ instanceId }) {
                                         {renderParameterInputs()}
                                     </div>
 
-                                    {/* Buttons Container */}
-                                    <div className="pt-4 flex gap-4">
+                                    {/* Apply Parameters Button */}
+                                    <div className="pt-4">
                                         <button
                                             onClick={handleApplyParams}
-                                            className={`flex-1 px-4 py-3 bg-green-800 hover:bg-green-700 text-white rounded-lg text-sm 
+                                            className="w-full px-4 py-3 bg-green-800 hover:bg-green-700 text-white rounded-lg text-sm 
                                         font-medium transition-colors shadow-lg shadow-green-900/20 focus:ring-2 
-                                        focus:ring-green-500/50 active:transform active:scale-[0.98]`}
+                                        focus:ring-green-500/50 active:transform active:scale-[0.98]"
                                         >
                                             Apply Parameters
                                         </button>
@@ -2571,17 +2515,6 @@ export default function CompletenessControl({ instanceId }) {
                                                 {paramValidation.message}
                                             </p>
                                         )}
-                                        <button
-                                            onClick={runAllNodes}
-                                            disabled={isRunningAll}
-                                            className={`flex-1 px-4 py-3 text-white rounded-lg text-sm font-medium transition-colors 
-                                        shadow-lg shadow-blue-900/20 focus:ring-2 focus:ring-blue-500/50 
-                                        active:transform active:scale-[0.98] ${isRunningAll
-                                                    ? 'bg-blue-400 cursor-not-allowed'
-                                                    : 'bg-blue-600 hover:bg-blue-500'}`}
-                                        >
-                                            {isRunningAll ? 'Running...' : 'Run All'}
-                                        </button>
                                     </div>
 
                                     {/* Reset All Button */}

@@ -1,39 +1,46 @@
-import React, { memo } from 'react';
+import React from 'react';
 
 /**
  * Loading Spinner Component
- * Consistent loading indicator for the application
+ * Reusable loading indicator with customizable size and color
  */
-const LoadingSpinner = memo(({
-    message = 'Loading data...',
-    size = 'medium',
-    overlay = true
+const LoadingSpinner = ({
+    size = 'md',
+    color = 'white',
+    className = '',
+    text = '',
+    showText = false
 }) => {
     const sizeClasses = {
-        small: 'loading-spinner-small',
-        medium: 'loading-spinner-medium',
-        large: 'loading-spinner-large'
+        xs: 'h-3 w-3',
+        sm: 'h-4 w-4',
+        md: 'h-6 w-6',
+        lg: 'h-8 w-8',
+        xl: 'h-12 w-12'
     };
 
-    const spinnerContent = (
-        <div className={`loading-spinner ${sizeClasses[size]}`}>
-            <div className="loading-spinner-icon"></div>
-            {message && <span className="loading-spinner-text">{message}</span>}
+    const colorClasses = {
+        white: 'border-white',
+        blue: 'border-blue-500',
+        green: 'border-green-500',
+        red: 'border-red-500',
+        yellow: 'border-yellow-500',
+        gray: 'border-gray-500'
+    };
+
+    return (
+        <div className={`flex items-center justify-center ${className}`}>
+            <div className="flex items-center gap-2">
+                <div
+                    className={`animate-spin rounded-full border-2 border-t-transparent ${sizeClasses[size]} ${colorClasses[color]}`}
+                />
+                {showText && text && (
+                    <span className="text-sm text-gray-600">{text}</span>
+                )}
+            </div>
         </div>
     );
-
-    if (overlay) {
-        return (
-            <div className="loading-overlay">
-                {spinnerContent}
-            </div>
-        );
-    }
-
-    return spinnerContent;
-});
-
-LoadingSpinner.displayName = 'LoadingSpinner';
+};
 
 export default LoadingSpinner;
 

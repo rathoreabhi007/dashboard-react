@@ -20,13 +20,11 @@ const FailedNodeIndicator = ({
     const handleViewError = (e) => {
         e.stopPropagation();
 
-        // Create a mock output with fail_message for testing if nodeOutputs doesn't have it
+        // Use actual node output or provide a fallback message
         const output = nodeOutputs[nodeId] || {
-            fail_message: "Test failure: This is a simulated error for testing the failed node functionality. The node encountered a critical error during data processing.",
+            fail_message: "Node execution failed. Please check the execution logs for details.",
             execution_logs: [
-                "Starting processing at " + new Date().toISOString(),
-                "Processing with environment: TEST_FAILURE",
-                "Processing failed at " + new Date().toISOString()
+                "Node execution completed with failed status at " + new Date().toISOString()
             ],
             status: "failed"
         };

@@ -60,28 +60,186 @@ def error_handler(func):
     return wrapper
 
 def generate_test_data(num_cols=20, num_rows=100, step_name="generic"):
-    """Generate test data with specified number of columns and rows"""
-    logger.info(f"📊 Generating test data: {num_cols} columns x {num_rows} rows for {step_name}")
+    """Generate test data with specified number of columns and rows - UNIQUE PER NODE"""
+    logger.info(f"📊 Generating UNIQUE test data: {num_cols} columns x {num_rows} rows for {step_name}")
     
-    headers = [f"col_{i+1}" for i in range(num_cols)]
+    # Create node-specific data patterns
+    node_patterns = {
+        'reading_config_comp': {
+            'prefix': 'CONFIG',
+            'color': 'BLUE',
+            'data_type': 'configuration',
+            'special_cols': ['config_id', 'config_name', 'config_value', 'config_status']
+        },
+        'read_src_comp': {
+            'prefix': 'SRC',
+            'color': 'GREEN', 
+            'data_type': 'source_data',
+            'special_cols': ['src_id', 'src_name', 'src_type', 'src_status']
+        },
+        'read_tgt_comp': {
+            'prefix': 'TGT',
+            'color': 'RED',
+            'data_type': 'target_data', 
+            'special_cols': ['tgt_id', 'tgt_name', 'tgt_type', 'tgt_status']
+        },
+        'pre_harmonisation_src_comp': {
+            'prefix': 'PRE_SRC',
+            'color': 'PURPLE',
+            'data_type': 'pre_harmonized_src',
+            'special_cols': ['pre_src_id', 'pre_src_name', 'harmonization_status', 'quality_score']
+        },
+        'harmonisation_src_comp': {
+            'prefix': 'HARM_SRC',
+            'color': 'ORANGE',
+            'data_type': 'harmonized_src',
+            'special_cols': ['harm_src_id', 'harm_src_name', 'harmonization_level', 'completeness']
+        },
+        'enrichment_file_search_src_comp': {
+            'prefix': 'ENRICH_SEARCH_SRC',
+            'color': 'CYAN',
+            'data_type': 'enrichment_search_src',
+            'special_cols': ['search_id', 'search_pattern', 'files_found', 'search_status']
+        },
+        'enrichment_src_comp': {
+            'prefix': 'ENRICH_SRC',
+            'color': 'MAGENTA',
+            'data_type': 'enriched_src',
+            'special_cols': ['enrich_id', 'enrich_type', 'enrichment_score', 'enrichment_status']
+        },
+        'data_transform_src_comp': {
+            'prefix': 'TRANSFORM_SRC',
+            'color': 'YELLOW',
+            'data_type': 'transformed_src',
+            'special_cols': ['transform_id', 'transform_type', 'transformation_rules', 'transform_status']
+        },
+        'pre_harmonisation_tgt_comp': {
+            'prefix': 'PRE_TGT',
+            'color': 'PINK',
+            'data_type': 'pre_harmonized_tgt',
+            'special_cols': ['pre_tgt_id', 'pre_tgt_name', 'harmonization_status', 'quality_score']
+        },
+        'harmonisation_tgt_comp': {
+            'prefix': 'HARM_TGT',
+            'color': 'BROWN',
+            'data_type': 'harmonized_tgt',
+            'special_cols': ['harm_tgt_id', 'harm_tgt_name', 'harmonization_level', 'completeness']
+        },
+        'enrichment_file_search_tgt_comp': {
+            'prefix': 'ENRICH_SEARCH_TGT',
+            'color': 'LIME',
+            'data_type': 'enrichment_search_tgt',
+            'special_cols': ['search_id', 'search_pattern', 'files_found', 'search_status']
+        },
+        'enrichment_tgt_comp': {
+            'prefix': 'ENRICH_TGT',
+            'color': 'INDIGO',
+            'data_type': 'enriched_tgt',
+            'special_cols': ['enrich_id', 'enrich_type', 'enrichment_score', 'enrichment_status']
+        },
+        'data_transform_tgt_comp': {
+            'prefix': 'TRANSFORM_TGT',
+            'color': 'TEAL',
+            'data_type': 'transformed_tgt',
+            'special_cols': ['transform_id', 'transform_type', 'transformation_rules', 'transform_status']
+        },
+        'combine_data_comp': {
+            'prefix': 'COMBINED',
+            'color': 'GOLD',
+            'data_type': 'combined_data',
+            'special_cols': ['combined_id', 'src_contribution', 'tgt_contribution', 'combination_status']
+        },
+        'apply_rules_comp': {
+            'prefix': 'RULES',
+            'color': 'SILVER',
+            'data_type': 'rules_applied',
+            'special_cols': ['rule_id', 'rule_name', 'rule_result', 'rule_status']
+        },
+        'output_rules_comp': {
+            'prefix': 'OUTPUT',
+            'color': 'PLATINUM',
+            'data_type': 'output_rules',
+            'special_cols': ['output_id', 'output_type', 'output_quality', 'output_status']
+        },
+        'break_rolling_comp': {
+            'prefix': 'BREAK_ROLLING',
+            'color': 'DIAMOND',
+            'data_type': 'break_rolling',
+            'special_cols': ['break_id', 'rolling_period', 'break_type', 'break_status']
+        }
+    }
+    
+    # Get node-specific pattern or use default
+    pattern = node_patterns.get(step_name, {
+        'prefix': 'GENERIC',
+        'color': 'DEFAULT',
+        'data_type': 'generic_data',
+        'special_cols': ['id', 'name', 'type', 'status']
+    })
+    
+    # Create node-specific headers
+    headers = []
+    special_cols = pattern['special_cols']
+    
+    # Add special columns first
+    for i, col in enumerate(special_cols):
+        headers.append(f"{pattern['prefix']}_{col}")
+    
+    # Add remaining generic columns
+    remaining_cols = num_cols - len(special_cols)
+    for i in range(remaining_cols):
+        headers.append(f"{pattern['prefix']}_col_{i+1}")
     
     # Randomly choose 30% of columns to be text columns
     text_col_indices = set(random.sample(range(num_cols), k=max(1, int(num_cols * 0.3))))
     
-    def random_text(length):
-        """Generate random text of specified length."""
-        return ''.join(random.choices(string.ascii_letters + string.digits + ' ', k=length))
+    def random_text(length, prefix=""):
+        """Generate random text with node-specific prefix."""
+        base_text = ''.join(random.choices(string.ascii_letters + string.digits + ' ', k=length-2))
+        return f"{prefix}_{base_text}" if prefix else base_text
 
     table = []
-    for _ in range(num_rows):
+    for row_idx in range(num_rows):
         row = []
-        for col in range(num_cols):
-            if col in text_col_indices:
-                row.append(random_text(random.randint(5, 20)))
+        for col_idx in range(num_cols):
+            if col_idx in text_col_indices:
+                # Generate node-specific text data
+                if col_idx < len(special_cols):
+                    # Special column - use meaningful data
+                    col_name = special_cols[col_idx]
+                    if 'id' in col_name:
+                        row.append(f"{pattern['prefix']}_ID_{row_idx+1:04d}")
+                    elif 'name' in col_name:
+                        row.append(f"{pattern['prefix']}_NAME_{row_idx+1}")
+                    elif 'status' in col_name:
+                        statuses = ['ACTIVE', 'PENDING', 'COMPLETED', 'FAILED', 'PROCESSING']
+                        row.append(random.choice(statuses))
+                    elif 'type' in col_name:
+                        types = ['TYPE_A', 'TYPE_B', 'TYPE_C', 'TYPE_D', 'TYPE_E']
+                        row.append(random.choice(types))
+                    else:
+                        row.append(random_text(random.randint(5, 15), pattern['prefix']))
+                else:
+                    # Generic column
+                    row.append(random_text(random.randint(5, 20), pattern['prefix']))
             else:
-                row.append(random.randint(1, 10000))
+                # Numeric data with node-specific ranges
+                if col_idx < len(special_cols):
+                    # Special column - use meaningful numeric data
+                    col_name = special_cols[col_idx]
+                    if 'score' in col_name or 'quality' in col_name:
+                        row.append(round(random.uniform(0.0, 1.0), 3))
+                    elif 'level' in col_name:
+                        row.append(random.randint(1, 10))
+                    else:
+                        row.append(random.randint(1, 1000))
+                else:
+                    # Generic numeric column with node-specific base
+                    base_value = hash(pattern['prefix']) % 1000
+                    row.append(base_value + random.randint(1, 1000))
         table.append(row)
     
+    logger.info(f"🎨 Generated {pattern['color']} themed data for {step_name} with prefix '{pattern['prefix']}'")
     return headers, table
 
 def create_csv_file(headers, table, filename, step_name):
@@ -172,6 +330,7 @@ def process_generic_node_with_csv(params, step_name):
     # Generate or read data
     if input_file_path and os.path.exists(input_file_path):
         # Read from previous CSV file
+        print(input_file_path)
         headers, table, file_info = read_csv_file(input_file_path, max_rows=100)
         if headers is None:
             # Fallback to generating new data
@@ -186,7 +345,7 @@ def process_generic_node_with_csv(params, step_name):
     output_filename = FILE_KEYS.get(step_name, f"{step_name}_data.csv")
     csv_info = create_csv_file(headers, table, output_filename, step_name)
     
-    # Generate histogram data
+    # Generate histogram data with node-specific information
     histogram_data = []
     for col_idx, header in enumerate(headers):
         try:
@@ -209,7 +368,8 @@ def process_generic_node_with_csv(params, step_name):
                     'summary': {
                         'min_length': min(len(str(val)) for val in column_data),
                         'max_length': max(len(str(val)) for val in column_data),
-                        'avg_length': sum(len(str(val)) for val in column_data) / len(column_data)
+                        'avg_length': sum(len(str(val)) for val in column_data) / len(column_data),
+                        'node_specific_info': f"Generated by {step_name} - Text column with {len(value_counts)} unique values"
                     }
                 })
             else:
@@ -225,7 +385,8 @@ def process_generic_node_with_csv(params, step_name):
                         'max': max(numeric_data),
                         'mean': sum(numeric_data) / len(numeric_data),
                         'median': sorted(numeric_data)[len(numeric_data)//2],
-                        'std_dev': (sum((x - sum(numeric_data)/len(numeric_data))**2 for x in numeric_data) / len(numeric_data))**0.5
+                        'std_dev': (sum((x - sum(numeric_data)/len(numeric_data))**2 for x in numeric_data) / len(numeric_data))**0.5,
+                        'node_specific_info': f"Generated by {step_name} - Numeric column with range {min(numeric_data):.2f} to {max(numeric_data):.2f}"
                     }
                 })
         except Exception as e:
@@ -235,7 +396,10 @@ def process_generic_node_with_csv(params, step_name):
                 'data_type': 'unknown',
                 'total_values': len(table),
                 'unique_values': 0,
-                'summary': {'error': str(e)}
+                'summary': {
+                    'error': str(e),
+                    'node_specific_info': f"Error in {step_name} - Column {header}"
+                }
             })
     
     processing_time = (datetime.now() - start_time).total_seconds()

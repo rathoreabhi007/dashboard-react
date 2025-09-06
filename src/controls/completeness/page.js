@@ -63,9 +63,14 @@ const CONSTANTS = {
         queued: '#f97316' // Orange color for queued status
     },
 
-    // API Configuration
-    POLLING_INTERVAL: 1000,
-    MAX_RETRIES: 3,
+    // API Configuration - Enhanced with timeout and retry
+    POLLING_INTERVAL: 2000,           // 2 seconds between polls (improved from 1s)
+    MAX_RETRIES: 3,                   // Retry failed requests 3 times
+    REQUEST_TIMEOUT: 30000,           // 30 seconds timeout for API calls
+    MAX_POLLING_ATTEMPTS: 900,        // 30 minutes max (900 * 2 seconds)
+    HEALTH_CHECK_INTERVAL: 10000,     // Check backend health every 10 seconds
+    TASK_TIMEOUT_MINUTES: 30,         // Task timeout in minutes
+    USE_LEGACY_MODE: false,           // Set to true for original behavior
 
     // Local Storage Keys
     STORAGE_KEYS: {
@@ -403,12 +408,29 @@ const CustomNode = memo(({ data, id, nodeOutputs, setSelectedNode, setSelectedTa
     const { runNode, resetNodeAndDownstream } = useContext(HandlerContext);
     const [isHovered, setIsHovered] = useState(false);
     const [showTooltip, setShowTooltip] = useState(false);
+    const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
 
     const isRunning = data.status === 'running';
     const isQueued = data.status === 'queued';
     const canReset = data.status === 'failed' || data.status === 'completed' || data.status === 'stopped' || data.status === 'queued';
     const isSelected = data.selected || false;
     const canRun = data.areParamsApplied && !isRunning && !isQueued;
+
+    // Check if node has been running too long (timeout warning)
+    useEffect(() => {
+        if (isRunning && data.startTime) {
+            const runningTime = Date.now() - data.startTime;
+            const timeoutThreshold = 30 * 60 * 1000; // 30 minutes
+            
+            if (runningTime > timeoutThreshold) {
+                setShowTimeoutWarning(true);
+            } else {
+                setShowTimeoutWarning(false);
+            }
+        } else {
+            setShowTimeoutWarning(false);
+        }
+    }, [isRunning, data.startTime]);
 
     // Base node style
     const baseStyle = {
@@ -665,6 +687,13 @@ const CustomNode = memo(({ data, id, nodeOutputs, setSelectedNode, setSelectedTa
                 }}
             />
 
+            {/* Timeout Warning Indicator */}
+            {showTimeoutWarning && (
+                <div className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 z-10">
+                    <FaClock className="w-3 h-3" />
+                </div>
+            )}
+
             <div className="flex gap-1 mt-1">
                 <button
                     onClick={(e) => {
@@ -900,13 +929,18 @@ export default function CompletenessControl({ instanceId }) {
     // Add validation state
     const [paramValidation, setParamValidation] = useState({
         isValid: false,
-        message: 'Please fill all required parameters'
+        message: ''
     });
 
     // Add this at the top level of CompletenessControl, with other useState hooks
 
     const [histogramFilterType, setHistogramFilterType] = useState('contains');
     const [histogramFilterValue, setHistogramFilterValue] = useState('');
+
+    // Enhanced health monitoring state
+    const [isBackendHealthy, setIsBackendHealthy] = useState(true);
+    const [backendHealthMessage, setBackendHealthMessage] = useState('');
+    // const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
 
     // Column selector for Data Output tab
 
@@ -1064,6 +1098,53 @@ export default function CompletenessControl({ instanceId }) {
             }
         }
     }, [nodes, nodeOutputs, setSelectedNode, setSelectedTab, setIsBottomBarOpen, setActivePanel]);
+
+    // Handle node click to show data view
+    const onNodeClick = useCallback((event, node) => {
+        event.stopPropagation();
+        
+        console.log(`🖱️ Node clicked: ${node.id}, status: ${node.data.status}`);
+        console.log(`🖱️ Current selectedNode:`, selectedNode?.id);
+        
+        // Only show data view if node has completed and has output data
+        if (node.data.status === 'completed') {
+            const output = (nodeOutputs && nodeOutputs[node.id]) ? nodeOutputs[node.id] : {};
+            
+            console.log(`📊 Node ${node.id} output:`, {
+                hasOutput: !!output,
+                outputKeys: output ? Object.keys(output) : null,
+                hasData: !!(output?.calculation_results?.table),
+                hasHistogram: !!(output?.histogram_data),
+                headers: output?.calculation_results?.headers?.slice(0, 3) // Show first 3 headers
+            });
+
+            // Batch state updates to prevent flickering
+            setTimeout(() => {
+                const newSelectedNode = {
+                    id: node.id,
+                    data: {
+                        ...node.data,
+                        output
+                    }
+                };
+                
+                console.log(`🔄 Setting new selectedNode:`, {
+                    id: newSelectedNode.id,
+                    fullName: newSelectedNode.data.fullName,
+                    hasOutput: !!newSelectedNode.data.output,
+                    headers: newSelectedNode.data.output?.calculation_results?.headers?.slice(0, 3)
+                });
+                
+                setSelectedNode(newSelectedNode);
+                setSelectedTab('data');
+                setIsBottomBarOpen(true);
+                setActivePanel('bottombar');
+                setDataViewLocked(true); // Lock the data view open
+            }, 0);
+        } else {
+            console.log(`⚠️ Node ${node.id} not completed (status: ${node.data.status}), no data to show`);
+        }
+    }, [nodeOutputs, setSelectedNode, setSelectedTab, setIsBottomBarOpen, setActivePanel, selectedNode]);
 
     // Cleanup timeouts on unmount
     useEffect(() => {
@@ -1385,6 +1466,27 @@ export default function CompletenessControl({ instanceId }) {
         }
     }, [isBottomBarOpen, activePanel, selectedNode, selectedTab, uiStateKey]);
 
+    // Enhanced backend health monitoring
+    useEffect(() => {
+        const checkHealth = async () => {
+            try {
+                const isHealthy = await ApiService.checkBackendHealth(true);
+                setIsBackendHealthy(isHealthy);
+                setBackendHealthMessage(isHealthy ? 'Backend is healthy' : 'Backend is not responding');
+            } catch (error) {
+                setIsBackendHealthy(false);
+                setBackendHealthMessage(`Backend error: ${error.message}`);
+            }
+        };
+
+        // Initial health check
+        checkHealth();
+
+        // Set up periodic health checks
+        const interval = setInterval(checkHealth, CONSTANTS.HEALTH_CHECK_INTERVAL);
+        return () => clearInterval(interval);
+    }, []);
+
 
 
     // Update the onSelectionChange handler
@@ -1525,152 +1627,179 @@ export default function CompletenessControl({ instanceId }) {
             setProcessIds(prev => ({ ...prev, [nodeId]: response.process_id }));
             console.log(`💾 Stored process ID for ${nodeId}: ${response.process_id}`);
 
-            // Update node status to running
+            // Update node status to running with start time
             updateNodeStatus(nodeId, 'running');
-            console.log(`🔄 Updated ${nodeId} status to 'running'`);
+            setNodes(nds => nds.map(node =>
+                node.id === nodeId
+                    ? { ...node, data: { ...node.data, startTime: Date.now() } }
+                    : node
+            ));
+            console.log(`🔄 Updated ${nodeId} status to 'running' with start time`);
 
-            // Poll for completion with enhanced logging and failed status handling
-            // IMPORTANT: Polling continues indefinitely as long as status is "running"
-            // This supports long-running ETL operations that may take hours
-            const pollInterval = 5000; // 5 seconds
-            let pollCount = 0;
+            // Enhanced polling with timeout and health checks
+            console.log(`⏰ Starting enhanced polling for ${nodeId} with timeout protection`);
 
-            console.log(`⏰ Starting polling for ${nodeId} - Interval: ${pollInterval}ms (Will continue until completion)`);
-
-            while (true) { // Continue polling as long as status is running
-                pollCount++;
-                console.log(`🔄 Polling status for node ${nodeId} (Process ID: ${response.process_id}) - Attempt ${pollCount}`);
-
-                // Check if node has been cancelled
-                if (cancelledNodesRef.current.has(nodeId)) {
-                    console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
-                    updateNodeStatus(nodeId, 'stopped');
-                    return null;
-                }
-
-                // Check if node status is already stopped (from onStop function)
-                const currentNode = nodes.find(n => n.id === nodeId);
-                if (currentNode?.data.status === 'stopped') {
-                    console.log(`🛑 Node ${nodeId} is already stopped, stopping polling`);
-                    return null;
-                }
-
-                try {
-                    const status = await ApiService.getProcessStatus(response.process_id);
-                    console.log(`📊 Status response for ${nodeId}:`, {
-                        process_id: status.process_id,
-                        status: status.status,
-                        hasOutput: !!status.output,
-                        hasError: !!status.error,
-                        pollCount: pollCount
-                    });
-
-                    if (status.status === 'completed') {
-                        console.log(`✅ Node ${nodeId} completed successfully!`);
-
-                        // Get the output
-                        try {
-                            const output = await ApiService.getProcessOutput(response.process_id);
-                            console.log(`📥 Retrieved output for ${nodeId}:`, {
-                                hasOutput: !!output,
-                                outputType: typeof output,
-                                outputKeys: output ? Object.keys(output) : null
-                            });
-
-                            // Validate the output before storing
-                            if (output && output.status === 'failed') {
-                                console.error(`❌ Node ${nodeId} returned failed status in output`);
-                                updateNodeStatus(nodeId, 'failed');
-                                updateNodeOutput(nodeId, output);
-                                return null;
+            // Use enhanced polling if not in legacy mode
+            if (!CONSTANTS.USE_LEGACY_MODE) {
+                return new Promise((resolve, reject) => {
+                    ApiService.pollTaskStatus(
+                        response.process_id,
+                        // Status update callback
+                        (status, attempts) => {
+                            console.log(`📊 Status update for ${nodeId} (attempt ${attempts}):`, status.status);
+                            
+                            // Check if node has been cancelled
+                            if (cancelledNodesRef.current.has(nodeId)) {
+                                console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
+                                updateNodeStatus(nodeId, 'stopped');
+                                reject(new Error('Node was cancelled'));
+                                return;
                             }
 
-                            if (output && output.fail_message) {
-                                console.error(`❌ Node ${nodeId} has fail message: ${output.fail_message}`);
-                                updateNodeStatus(nodeId, 'failed');
-                                updateNodeOutput(nodeId, output);
-                                return null;
+                            // Check if node status is already stopped
+                            const currentNode = nodes.find(n => n.id === nodeId);
+                            if (currentNode?.data.status === 'stopped') {
+                                console.log(`🛑 Node ${nodeId} is already stopped, stopping polling`);
+                                reject(new Error('Node was stopped'));
+                                return;
                             }
+                        },
+                        // Completion callback
+                        async (finalStatus) => {
+                            console.log(`✅ Node ${nodeId} completed successfully!`);
+                            
+                            try {
+                                const output = await ApiService.getProcessOutput(response.process_id);
+                                console.log(`📥 Retrieved output for ${nodeId}:`, {
+                                    hasOutput: !!output,
+                                    outputType: typeof output,
+                                    outputKeys: output ? Object.keys(output) : null
+                                });
 
-                            updateNodeOutput(nodeId, output);
-                            console.log(`💾 Stored output for ${nodeId}`);
+                                // Validate the output before storing
+                                if (output && output.status === 'failed') {
+                                    console.error(`❌ Node ${nodeId} returned failed status in output`);
+                                    updateNodeStatus(nodeId, 'failed');
+                                    updateNodeOutput(nodeId, output);
+                                    reject(new Error('Node returned failed status'));
+                                    return;
+                                }
 
-                            updateNodeStatus(nodeId, 'completed');
-                            console.log(`✅ Updated ${nodeId} status to 'completed'`);
+                                if (output && output.fail_message) {
+                                    console.error(`❌ Node ${nodeId} has fail message: ${output.fail_message}`);
+                                    updateNodeStatus(nodeId, 'failed');
+                                    updateNodeOutput(nodeId, output);
+                                    reject(new Error(output.fail_message));
+                                    return;
+                                }
 
-                            return output;
-                        } catch (outputError) {
-                            console.error(`❌ Error getting output for ${nodeId}:`, outputError);
-                            updateNodeStatus(nodeId, 'failed');
-                            console.log(`❌ Updated ${nodeId} status to 'failed' due to output error`);
-                            break;
+                                updateNodeOutput(nodeId, output);
+                                console.log(`💾 Stored output for ${nodeId}`);
+
+                                updateNodeStatus(nodeId, 'completed');
+                                console.log(`✅ Updated ${nodeId} status to 'completed'`);
+
+                                resolve(output);
+                            } catch (outputError) {
+                                console.error(`❌ Error getting output for ${nodeId}:`, outputError);
+                                updateNodeStatus(nodeId, 'failed');
+                                console.log(`❌ Updated ${nodeId} status to 'failed' due to output error`);
+                                reject(outputError);
+                            }
+                        },
+                        // Error callback
+                        (error) => {
+                            console.error(`❌ Node ${nodeId} polling error:`, error);
+                            
+                            // Enhanced error handling
+                            if (error.message.includes('timeout')) {
+                                console.error(`⏰ Node ${nodeId} timed out`);
+                                updateNodeStatus(nodeId, 'failed');
+                                updateNodeOutput(nodeId, {
+                                    status: 'failed',
+                                    fail_message: `Task timed out after ${CONSTANTS.TASK_TIMEOUT_MINUTES} minutes`,
+                                    execution_logs: [`Task timed out: ${error.message}`]
+                                });
+                            } else if (error.message.includes('Backend is not responding')) {
+                                console.error(`🔴 Backend health issue for node ${nodeId}`);
+                                updateNodeStatus(nodeId, 'failed');
+                                updateNodeOutput(nodeId, {
+                                    status: 'failed',
+                                    fail_message: 'Backend is not responding. Please check server status.',
+                                    execution_logs: [`Backend health check failed: ${error.message}`]
+                                });
+                            } else if (error.message.includes('Node was cancelled') || error.message.includes('Node was stopped')) {
+                                console.log(`🛑 Node ${nodeId} was cancelled/stopped`);
+                                updateNodeStatus(nodeId, 'stopped');
+                            } else {
+                                // Handle other errors
+                                updateNodeStatus(nodeId, 'failed');
+                                updateNodeOutput(nodeId, {
+                                    status: 'failed',
+                                    fail_message: error.message,
+                                    execution_logs: [`Task failed: ${error.message}`]
+                                });
+                            }
+                            
+                            reject(error);
+                        },
+                        // Configuration options
+                        {
+                            maxAttempts: CONSTANTS.MAX_POLLING_ATTEMPTS,
+                            interval: CONSTANTS.POLLING_INTERVAL,
+                            healthCheckInterval: CONSTANTS.HEALTH_CHECK_INTERVAL
                         }
-                    } else if (status.status === 'failed') {
-                        console.error(`❌ Node ${nodeId} failed:`, status.error);
-                        updateNodeStatus(nodeId, 'failed');
-                        console.log(`❌ Updated ${nodeId} status to 'failed'`);
-
-                        // Store the error output for display
-                        updateNodeOutput(nodeId, {
-                            status: 'failed',
-                            fail_message: status.error || 'Unknown error occurred',
-                            execution_logs: [`Node ${nodeId} failed: ${status.error}`]
-                        });
-                        break;
-                    } else if (status.status === 'terminated') {
-                        console.log(`🛑 Node ${nodeId} was terminated - STOPPING POLLING`);
-                        updateNodeStatus(nodeId, 'stopped');
-                        console.log(`🛑 Updated ${nodeId} status to 'stopped' due to termination`);
-                        console.log(`🛑 Breaking out of polling loop for ${nodeId}`);
-                        break;
-                    } else if (status.status === 'running') {
-                        console.log(`⏳ Node ${nodeId} still running... (${status.status}) - Poll count: ${pollCount}`);
-                        await new Promise(res => setTimeout(res, pollInterval));
-                    } else {
-                        console.log(`❓ Unknown status for ${nodeId}: ${status.status} - continuing to poll`);
-                        await new Promise(res => setTimeout(res, pollInterval));
-                    }
-
-                    // Log polling progress for long-running operations
-                    if (pollCount % 12 === 0) { // Log every minute (12 * 5 seconds)
-                        console.log(`⏰ Node ${nodeId} has been running for ${Math.round(pollCount * 5 / 60)} minutes (${pollCount} polls)`);
-                    }
-
-                    // Safety check: Prevent runaway polling (emergency stop after 24 hours)
-                    if (pollCount > 17280) { // 24 hours = 17280 polls (5-second intervals)
-                        console.error(`🚨 EMERGENCY STOP: Node ${nodeId} has been polling for 24+ hours, stopping to prevent runaway`);
-                        updateNodeStatus(nodeId, 'failed');
-                        updateNodeOutput(nodeId, {
-                            status: 'failed',
-                            fail_message: 'Emergency stop: Node has been running for over 24 hours. Please check the backend process.',
-                            execution_logs: [`Emergency stop after 24+ hours of polling (${pollCount} attempts)`]
-                        });
-                        break;
-                    }
-                } catch (error) {
-                    console.error(`❌ Error polling node ${nodeId}:`, error);
-                    console.error(`❌ Error details:`, {
-                        message: error.message,
-                        stack: error.stack,
-                        pollCount: pollCount
-                    });
-
-                    // Only set to failed if the node is not idle and not cancelled
-                    if (!cancelledNodesRef.current.has(nodeId)) {
-                        setNodes(nds => nds.map(node =>
-                            node.id === nodeId && node.data.status !== 'idle'
-                                ? { ...node, data: { ...node.data, status: 'failed' } }
-                                : node
-                        ));
-                        console.log(`❌ Set ${nodeId} status to 'failed' due to polling error`);
-                    } else {
-                        console.log(`🛑 Node ${nodeId} was cancelled during error, not setting to failed`);
-                    }
-                    break; // Exit the loop on error
-                }
+                    );
+                });
+            } else {
+                // Legacy polling mode (original behavior)
+                console.log(`⏰ Starting legacy polling for ${nodeId} - Interval: 5000ms (Will continue until completion)`);
+                
+                return new Promise((resolve, reject) => {
+                    ApiService.legacyPollTaskStatus(
+                        response.process_id,
+                        // Status update callback
+                        (status, attempts) => {
+                            console.log(`📊 Legacy status update for ${nodeId} (attempt ${attempts}):`, status.status);
+                            
+                            // Check if node has been cancelled
+                            if (cancelledNodesRef.current.has(nodeId)) {
+                                console.log(`🛑 Node ${nodeId} was cancelled, stopping polling`);
+                                updateNodeStatus(nodeId, 'stopped');
+                                reject(new Error('Node was cancelled'));
+                                return;
+                            }
+                        },
+                        // Completion callback
+                        async (finalStatus) => {
+                            console.log(`✅ Node ${nodeId} completed successfully!`);
+                            
+                            try {
+                                const output = await ApiService.getProcessOutput(response.process_id);
+                                updateNodeOutput(nodeId, output);
+                                updateNodeStatus(nodeId, 'completed');
+                                resolve(output);
+                            } catch (outputError) {
+                                console.error(`❌ Error getting output for ${nodeId}:`, outputError);
+                                updateNodeStatus(nodeId, 'failed');
+                                reject(outputError);
+                            }
+                        },
+                        // Error callback
+                        (error) => {
+                            console.error(`❌ Node ${nodeId} legacy polling error:`, error);
+                            updateNodeStatus(nodeId, 'failed');
+                            reject(error);
+                        },
+                        // Legacy configuration
+                        {
+                            maxAttempts: 17280,  // 24 hours = 17280 polls (5-second intervals)
+                            interval: 5000       // 5 seconds (original interval)
+                        }
+                    );
+                });
             }
 
-            return null;
         } catch (error) {
             console.error(`❌ Error in runNodeAndWait for ${nodeId}:`, error);
             console.error(`❌ Error details:`, {
@@ -1982,8 +2111,14 @@ export default function CompletenessControl({ instanceId }) {
                                         </h1>
                                     </div>
 
-                                    {/* Right spacer for balance */}
-                                    <div className="flex-shrink-0 w-24"></div>
+                                    {/* Backend Health Indicator - Right */}
+                                    <div className="flex-shrink-0 flex items-center gap-2">
+                                        <div className={`px-3 py-1 rounded-lg text-sm font-medium ${
+                                            isBackendHealthy ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                        }`}>
+                                            {isBackendHealthy ? '🟢' : '🔴'} {backendHealthMessage}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div
@@ -2009,6 +2144,7 @@ export default function CompletenessControl({ instanceId }) {
                                     onEdgesChange={onEdgesChange}
                                     onConnect={onConnect}
                                     onEdgeClick={onEdgeClick}
+                                    onNodeClick={onNodeClick}
                                     nodeTypes={nodeTypes}
                                     connectionMode={ConnectionMode.Loose}
                                     fitView
@@ -2311,6 +2447,7 @@ export default function CompletenessControl({ instanceId }) {
                                                         {selectedNode.data.output?.calculation_results?.headers && selectedNode.data.output?.calculation_results?.table ? (
                                                             <div className="flex flex-col h-full">
                                                                 <DataOutputTab
+                                                                    key={`data-output-${selectedNode.id}-${Date.now()}`}
                                                                     selectedNode={selectedNode}
                                                                     bottomBarHeight={bottomBarHeight}
                                                                     onError={(error) => {

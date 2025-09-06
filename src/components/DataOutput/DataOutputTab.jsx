@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useEffect, useState } from 'react';
 import { DataOutputProvider } from '../../contexts/DataOutputContext';
 import { ColumnResizeProvider } from '../../contexts/ColumnResizeContext';
 import DataOutputContent from './DataOutputContent';
@@ -13,11 +13,25 @@ const DataOutputTab = memo(({
     bottomBarHeight = 600,
     onError
 }) => {
+    // Add a key to force re-render when selectedNode changes
+    const nodeKey = selectedNode?.id || 'no-node';
+    
+    // Force re-render when selectedNode changes
+    const [forceUpdate, setForceUpdate] = useState(0);
+    
+    useEffect(() => {
+        console.log('🔄 DataOutputTab: selectedNode changed, forcing update:', selectedNode?.id);
+        setForceUpdate(prev => prev + 1);
+    }, [selectedNode?.id]);
+    
     // Calculate available height based on bottomBarHeight
     const availableHeight = bottomBarHeight - 20; // Reduced padding since DataOverview is removed
     // Memoize data processing to prevent unnecessary re-renders
     const processedData = useMemo(() => {
+        console.log('🔄 DataOutputTab: Processing data for node:', selectedNode?.id, selectedNode?.data?.fullName);
+        
         if (!selectedNode?.data?.output?.calculation_results) {
+            console.log('❌ DataOutputTab: No calculation results found');
             return {
                 headers: [],
                 table: [],
@@ -30,7 +44,13 @@ const DataOutputTab = memo(({
         const { headers, table, total_rows_generated } = selectedNode.data.output.calculation_results;
         const totalCount = selectedNode.data.output.count;
 
-
+        console.log('📊 DataOutputTab: Processing data:', {
+            nodeId: selectedNode.id,
+            nodeName: selectedNode.data.fullName,
+            headersCount: headers?.length,
+            tableRows: table?.length,
+            totalCount: totalCount
+        });
 
         // Transform table data to object format for easier processing
         const transformedTable = table ? table.map((row, index) => {
@@ -49,10 +69,14 @@ const DataOutputTab = memo(({
             columns: headers ? headers.length : 0
         };
 
-
+        console.log('✅ DataOutputTab: Processed data result:', {
+            headers: result.headers.slice(0, 3), // Show first 3 headers
+            tableRows: result.table.length,
+            totalRows: result.totalRows
+        });
 
         return result;
-    }, [selectedNode?.data?.output?.calculation_results, selectedNode?.data?.output?.count]);
+    }, [selectedNode?.id, selectedNode?.data?.fullName, selectedNode?.data?.output?.calculation_results, selectedNode?.data?.output?.count]);
 
     // Check if node has failed and show fail_message
     if (selectedNode?.data?.output?.fail_message) {
@@ -107,6 +131,7 @@ const DataOutputTab = memo(({
     return (
         <ErrorBoundary onError={onError}>
             <DataOutputProvider
+                key={`${nodeKey}-${forceUpdate}`}
                 initialData={processedData}
                 nodeOutput={selectedNode.data.output}
             >

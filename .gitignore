@@ -110,6 +110,7 @@ env.bak/
 venv.bak/
 myenv/
 venv
-
+task_storage/
+data/
 # Lighthouse reports
 lighthouse-report*.json

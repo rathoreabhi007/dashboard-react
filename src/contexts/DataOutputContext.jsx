@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useMemo } from 'react';
+import React, { createContext, useContext, useReducer, useMemo, useEffect } from 'react';
 
 // Initial state structure
 const initialState = {
@@ -272,12 +272,25 @@ const DataOutputContext = createContext();
 
 // Provider component
 export const DataOutputProvider = ({ children, initialData, nodeOutput }) => {
-
-
     const [state, dispatch] = useReducer(dataOutputReducer, {
         ...initialState,
         data: initialData || initialState.data
     });
+
+    // Update data when initialData changes
+    useEffect(() => {
+        if (initialData && initialData !== state.data) {
+            console.log('🔄 DataOutputProvider: Updating data from initialData:', {
+                nodeId: nodeOutput?.step_type,
+                headersCount: initialData.headers?.length,
+                tableRows: initialData.table?.length
+            });
+            dispatch({
+                type: 'SET_DATA',
+                payload: initialData
+            });
+        }
+    }, [initialData, nodeOutput?.step_type, state.data]);
 
     // Memoized computed values
     const computedValues = useMemo(() => {

@@ -839,7 +839,7 @@ export default function CompletenessControl({ instanceId }) {
     });
     const [isResizingBottom, setIsResizingBottom] = useState(false);
     const [selectedNode, setSelectedNode] = useState(storedUIState.selectedNode || null);
-    const [selectedTab, setSelectedTab] = useState(storedUIState.selectedTab || 'data');
+    const [selectedTab, setSelectedTab] = useState(storedUIState.selectedTab || 'histogram');
     const [dataViewLocked, setDataViewLocked] = useState(false); // Track if data view is locked open
     const [areParamsApplied, setAreParamsApplied] = useState(() => {
         const saved = localStorage.getItem(paramKey);
@@ -1090,7 +1090,7 @@ export default function CompletenessControl({ instanceId }) {
                             output
                         }
                     });
-                    setSelectedTab('data');
+                    setSelectedTab('histogram');
                     setIsBottomBarOpen(true);
                     setActivePanel('bottombar');
                     setDataViewLocked(true); // Lock the data view open
@@ -1135,11 +1135,11 @@ export default function CompletenessControl({ instanceId }) {
                     headers: newSelectedNode.data.output?.calculation_results?.headers?.slice(0, 3)
                 });
                 
-                setSelectedNode(newSelectedNode);
-                setSelectedTab('data');
-                setIsBottomBarOpen(true);
-                setActivePanel('bottombar');
-                setDataViewLocked(true); // Lock the data view open
+                     setSelectedNode(newSelectedNode);
+                     setSelectedTab('histogram');
+                     setIsBottomBarOpen(true);
+                     setActivePanel('bottombar');
+                     setDataViewLocked(true); // Lock the data view open
             }, 0);
         } else {
             console.log(`⚠️ Node ${node.id} not completed (status: ${node.data.status}), no data to show`);
@@ -1300,7 +1300,7 @@ export default function CompletenessControl({ instanceId }) {
         setIsBottomBarOpen(false);
         setActivePanel(null);
         setSelectedNode(null);
-        setSelectedTab('data');
+        setSelectedTab('histogram');
         localStorage.removeItem(uiStateKey);
 
         // Reset all node statuses to idle and clear all visual states
@@ -2305,7 +2305,7 @@ export default function CompletenessControl({ instanceId }) {
                                                                     </div>
                                                                 </div>
                                                                 <div
-                                                                    className="border border-gray-300 rounded bg-white overflow-auto"
+                                                                    className="border border-gray-300 rounded bg-blue-100 overflow-auto"
                                                                     style={{
                                                                         height: `${bottomBarHeight - 140}px`
                                                                     }}
